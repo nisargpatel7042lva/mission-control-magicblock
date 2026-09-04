@@ -1,0 +1,23 @@
+# Node / Next.js
+app/node_modules/
+app/.next/
+app/out/
+app/next-env.d.ts
+app/tsconfig.tsbuildinfo
+app/*.tsbuildinfo
+app/npm-debug.log*
+app/.env*.local
+
+# Rust / Anchor build output
+target/
+.anchor/
+test-ledger/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Secrets (never commit)
+.gh-config/
+*.pem
+id_rsa*
