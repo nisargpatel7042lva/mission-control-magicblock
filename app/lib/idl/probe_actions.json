@@ -1,0 +1,741 @@
+{
+  "address": "63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh",
+  "metadata": {
+    "name": "probe_actions",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Mission Control - Magic Actions probe (post-commit base-layer effect)"
+  },
+  "instructions": [
+    {
+      "name": "commit_and_update_milestone",
+      "docs": [
+        "Commit the ER probe and, in the same base-layer transaction attempt,",
+        "schedule the `update_milestone` action against the freshly committed",
+        "state. `escrow_authority` is the user's wallet, so this is a",
+        "user-paid action (`build_and_invoke`, not `_signed`)."
+      ],
+      "discriminator": [
+        10,
+        250,
+        113,
+        129,
+        11,
+        35,
+        7,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_id",
+          "address": "63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "delegate",
+      "discriminator": [
+        90,
+        147,
+        75,
+        178,
+        85,
+        88,
+        4,
+        137
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                75,
+                3,
+                36,
+                248,
+                142,
+                214,
+                170,
+                117,
+                98,
+                32,
+                16,
+                178,
+                106,
+                62,
+                49,
+                182,
+                217,
+                249,
+                159,
+                26,
+                207,
+                117,
+                146,
+                189,
+                112,
+                247,
+                42,
+                12,
+                177,
+                241,
+                51,
+                218
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  108,
+                  101,
+                  115,
+                  116,
+                  111,
+                  110,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "ping",
+      "discriminator": [
+        173,
+        0,
+        94,
+        236,
+        73,
+        133,
+        225,
+        153
+      ],
+      "accounts": [
+        {
+          "name": "probe",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "process_undelegation",
+      "discriminator": [
+        196,
+        28,
+        41,
+        206,
+        48,
+        37,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "base_account",
+          "writable": true
+        },
+        {
+          "name": "buffer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  110,
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101,
+                  45,
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_account"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                181,
+                183,
+                0,
+                225,
+                242,
+                87,
+                58,
+                192,
+                204,
+                6,
+                34,
+                1,
+                52,
+                74,
+                207,
+                151,
+                184,
+                53,
+                6,
+                235,
+                140,
+                229,
+                25,
+                152,
+                204,
+                98,
+                126,
+                24,
+                147,
+                128,
+                167,
+                62
+              ]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "account_seeds",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "undelegate",
+      "discriminator": [
+        131,
+        148,
+        180,
+        198,
+        91,
+        104,
+        42,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_milestone",
+      "docs": [
+        "Post-commit action entrypoint. Only reachable through the real",
+        "post-commit path because `escrow` must be a signer pinned to the",
+        "escrow PDA derived from `escrow_auth` - see the `UpdateMilestoneAction`",
+        "accounts struct."
+      ],
+      "discriminator": [
+        82,
+        225,
+        138,
+        190,
+        233,
+        239,
+        202,
+        197
+      ],
+      "accounts": [
+        {
+          "name": "milestone",
+          "writable": true
+        },
+        {
+          "name": "probe",
+          "docs": [
+            "owner is the delegation program while still delegated, or this",
+            "program once undelegated. Seeds pin it to the same user as",
+            "`milestone` regardless of which program currently owns it."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "milestone.owner",
+                "account": "Milestone"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_auth",
+          "docs": [
+            "for this user-paid flow)."
+          ]
+        },
+        {
+          "name": "escrow",
+          "docs": [
+            "proves the call arrived through the real post-commit path."
+          ],
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_milestone_direct",
+      "docs": [
+        "Direct, wallet-authorized path for the identical logic (e.g. an admin",
+        "forcing a resync). Kept as a separate instruction rather than folding",
+        "escrow checks into `update_milestone` itself, per the \"two thin",
+        "instructions over one shared function\" pattern - each entrypoint",
+        "carries exactly the authentication it needs."
+      ],
+      "discriminator": [
+        7,
+        23,
+        28,
+        137,
+        202,
+        62,
+        216,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "milestone",
+          "writable": true
+        },
+        {
+          "name": "probe",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  99,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "milestone"
+          ]
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "ActionProbe",
+      "discriminator": [
+        215,
+        79,
+        2,
+        150,
+        246,
+        57,
+        228,
+        176
+      ]
+    },
+    {
+      "name": "Milestone",
+      "discriminator": [
+        38,
+        210,
+        239,
+        177,
+        85,
+        184,
+        10,
+        44
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "caller did not arrive through the authenticated post-commit action path"
+    }
+  ],
+  "types": [
+    {
+      "name": "ActionProbe",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "count",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Milestone",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "high_value",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,331 @@
+{
+  "address": "ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW",
+  "metadata": {
+    "name": "probe_oracle",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Mission Control - Pricing Oracle probe (feed identity + freshness)"
+  },
+  "instructions": [
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "observe_price",
+      "docs": [
+        "Verify and record one price observation. Reverts (rather than",
+        "recording stale/invalid data) if the feed doesn't match, the price is",
+        "non-positive, or the upstream publish time exceeds",
+        "`MAX_PRICE_AGE_SECONDS` - `get_price_no_older_than` enforces the",
+        "freshness bound itself against the current on-chain clock."
+      ],
+      "discriminator": [
+        147,
+        178,
+        4,
+        21,
+        14,
+        213,
+        81,
+        159
+      ],
+      "accounts": [
+        {
+          "name": "probe",
+          "writable": true
+        },
+        {
+          "name": "price_update",
+          "docs": [
+            "The MagicBlock Pricing Oracle's republished feed account. Its address",
+            "(not only its type) must be the one the application configured for",
+            "this feed - checked here via the `feed_id` match, matching the",
+            "consumer safety checklist."
+          ]
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "PriceProbe",
+      "discriminator": [
+        105,
+        88,
+        111,
+        80,
+        226,
+        121,
+        186,
+        145
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "UnexpectedFeed",
+      "msg": "price feed account does not match the configured feed id"
+    },
+    {
+      "code": 6001,
+      "name": "StaleOrInvalidPrice",
+      "msg": "price update is stale, missing, or failed verification"
+    },
+    {
+      "code": 6002,
+      "name": "NonPositivePrice",
+      "msg": "oracle price must be greater than zero"
+    }
+  ],
+  "types": [
+    {
+      "name": "PriceFeedMessage",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "feed_id",
+            "docs": [
+              "`FeedId` but avoid the type alias because of compatibility issues with Anchor's `idl-build` feature."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price",
+            "type": "i64"
+          },
+          {
+            "name": "conf",
+            "type": "u64"
+          },
+          {
+            "name": "exponent",
+            "type": "i32"
+          },
+          {
+            "name": "publish_time",
+            "docs": [
+              "The timestamp of this price update in seconds"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "prev_publish_time",
+            "docs": [
+              "The timestamp of the previous price update. This field is intended to allow users to",
+              "identify the single unique price update for any moment in time:",
+              "for any time t, the unique update is the one such that prev_publish_time < t <= publish_time.",
+              "",
+              "Note that there may not be such an update while we are migrating to the new message-sending logic,",
+              "as some price updates on pythnet may not be sent to other chains (because the message-sending",
+              "logic may not have triggered). We can solve this problem by making the message-sending mandatory",
+              "(which we can do once publishers have migrated over).",
+              "",
+              "Additionally, this field may be equal to publish_time if the message is sent on a slot where",
+              "where the aggregation was unsuccesful. This problem will go away once all publishers have",
+              "migrated over to a recent version of pyth-agent."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "ema_price",
+            "type": "i64"
+          },
+          {
+            "name": "ema_conf",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceProbe",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "last_price",
+            "type": "i64"
+          },
+          {
+            "name": "last_exponent",
+            "type": "i32"
+          },
+          {
+            "name": "last_publish_time",
+            "type": "i64"
+          },
+          {
+            "name": "last_observed_slot",
+            "type": "u64"
+          },
+          {
+            "name": "observation_count",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceUpdateV2",
+      "docs": [
+        "A price update account. This account is used by the Pyth Receiver program to store a verified price update from a Pyth price feed.",
+        "It contains:",
+        "- `write_authority`: The write authority for this account. This authority can close this account to reclaim rent or update the account to contain a different price update.",
+        "- `verification_level`: The [`VerificationLevel`] of this price update. This represents how many Wormhole guardian signatures have been verified for this price update.",
+        "- `price_message`: The actual price update.",
+        "- `posted_slot`: The slot at which this price update was posted."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "write_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "verification_level",
+            "type": {
+              "defined": {
+                "name": "VerificationLevel"
+              }
+            }
+          },
+          {
+            "name": "price_message",
+            "type": {
+              "defined": {
+                "name": "PriceFeedMessage"
+              }
+            }
+          },
+          {
+            "name": "posted_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerificationLevel",
+      "docs": [
+        "Pyth price updates are bridged to all blockchains via Wormhole.",
+        "Using the price updates on another chain requires verifying the signatures of the Wormhole guardians.",
+        "The usual process is to check the signatures for two thirds of the total number of guardians, but this can be cumbersome on Solana because of the transaction size limits,",
+        "so we also allow for partial verification.",
+        "",
+        "This enum represents how much a price update has been verified:",
+        "- If `Full`, we have verified the signatures for two thirds of the current guardians.",
+        "- If `Partial`, only `num_signatures` guardian signatures have been checked.",
+        "",
+        "# Warning",
+        "Using partially verified price updates is dangerous, as it lowers the threshold of guardians that need to collude to produce a malicious price update."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Partial",
+            "fields": [
+              {
+                "name": "num_signatures",
+                "type": "u8"
+              }
+            ]
+          },
+          {
+            "name": "Full"
+          }
+        ]
+      }
+    }
+  ]
+}
