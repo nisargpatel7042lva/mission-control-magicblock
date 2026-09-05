@@ -1,0 +1,507 @@
+{
+  "address": "gzNGTCNmCBfxGJL5t5XExoeHsB9ooc4LUubZ41Po86K",
+  "metadata": {
+    "name": "probe_crank",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Mission Control - Crank probe (recurring ER-scheduled task)"
+  },
+  "instructions": [
+    {
+      "name": "delegate",
+      "discriminator": [
+        90,
+        147,
+        75,
+        178,
+        85,
+        88,
+        4,
+        137
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                10,
+                62,
+                132,
+                40,
+                173,
+                45,
+                73,
+                47,
+                57,
+                80,
+                109,
+                145,
+                79,
+                251,
+                196,
+                150,
+                1,
+                23,
+                178,
+                14,
+                177,
+                55,
+                125,
+                185,
+                68,
+                157,
+                121,
+                198,
+                236,
+                152,
+                240,
+                128
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "probe"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  97,
+                  110,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "gzNGTCNmCBfxGJL5t5XExoeHsB9ooc4LUubZ41Po86K"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  97,
+                  110,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "ping",
+      "docs": [
+        "Manual ping, for a side-by-side \"manual vs cranked\" comparison."
+      ],
+      "discriminator": [
+        173,
+        0,
+        94,
+        236,
+        73,
+        133,
+        225,
+        153
+      ],
+      "accounts": [
+        {
+          "name": "probe",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "process_undelegation",
+      "discriminator": [
+        196,
+        28,
+        41,
+        206,
+        48,
+        37,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "base_account",
+          "writable": true
+        },
+        {
+          "name": "buffer"
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "account_seeds",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "schedule_ping",
+      "docs": [
+        "Ask the ER scheduler to call `ping` on an interval, `iterations` times.",
+        "`task_id` must be globally unique per validator instance - derived",
+        "here from the probe's own address so two probes never collide."
+      ],
+      "discriminator": [
+        73,
+        19,
+        251,
+        17,
+        157,
+        23,
+        74,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "magic_program"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "docs": [
+            "stale data after the CPI; this handler re-reads/writes it manually."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  97,
+                  110,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "ScheduleArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "undelegate",
+      "discriminator": [
+        131,
+        148,
+        180,
+        198,
+        91,
+        104,
+        42,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  97,
+                  110,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  98,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "payer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "CrankProbe",
+      "discriminator": [
+        211,
+        176,
+        43,
+        55,
+        95,
+        215,
+        52,
+        32
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "CrankProbe",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "count",
+            "type": "u64"
+          },
+          {
+            "name": "task_id",
+            "type": "i64"
+          },
+          {
+            "name": "last_scheduled_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScheduleArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "task_id",
+            "type": "i64"
+          },
+          {
+            "name": "execution_interval_millis",
+            "type": "i64"
+          },
+          {
+            "name": "iterations",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}
