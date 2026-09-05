@@ -21,3 +21,7 @@ test-ledger/
 .gh-config/
 *.pem
 id_rsa*
+
+# Helper script deps (not needed for the build)
+scripts/node_modules/
+scripts/package-lock.json
