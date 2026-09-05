@@ -1,0 +1,84 @@
+=== Mission Control devnet deploy ===
+Fri Sep  4 12:23:24 +03 2026
+
+== 1. Checking Solana CLI ==
+solana-cli 3.1.11 (src:81d1f5fb; feat:4140108451, client:Agave)
+
+== 2. Wallet ==
+Reusing existing wallet at ~/.config/solana/id.json
+Wallet address: 3fTVWVBgm8yYh8XXd7qTBCBuLNP4nMKsCAgesHHCBnA5
+
+== 3. Requesting devnet SOL ==
+-- airdrop attempt 1 --
+Requesting airdrop of 2 SOL
+Error: airdrop request failed. This can happen when the rate limit is reached.
+(airdrop attempt failed/rate-limited, continuing)
+-- airdrop attempt 2 --
+Requesting airdrop of 2 SOL
+Error: airdrop request failed. This can happen when the rate limit is reached.
+(airdrop attempt failed/rate-limited, continuing)
+-- airdrop attempt 3 --
+Requesting airdrop of 2 SOL
+Error: airdrop request failed. This can happen when the rate limit is reached.
+(airdrop attempt failed/rate-limited, continuing)
+-- airdrop attempt 4 --
+Requesting airdrop of 2 SOL
+Error: airdrop request failed. This can happen when the rate limit is reached.
+(airdrop attempt failed/rate-limited, continuing)
+-- airdrop attempt 5 --
+Requesting airdrop of 2 SOL
+Error: airdrop request failed. This can happen when the rate limit is reached.
+(airdrop attempt failed/rate-limited, continuing)
+Current balance:
+5.24303428 SOL
+
+== 4. Deploying programs ==
+
+--- deploying probe_core ---
+Program Id: 96ru2VBdLyqvtvVTwgAKs9e4k8DVqpero5dHvXTVkfEA
+
+Signature: 4ZrfFfUiETeUfRCR3LCQxrfscZqTGMxZs3jd91R3L88f88T7xXSwWhxeCpwdfZL2bfeazVbAmNuhAdWVRr89yKGx
+
+
+--- deploying probe_vrf ---
+Program Id: EzQLQDFAapDwyHnPsv9PUnt4mEbrLPfgnpBJmeu766fT
+
+Signature: 4aLHRFSzWrnwVWsSW1VNWzKCeZn7CpkfXQWS6KowU1d6f4dMx7C5QZGHJtVugxBPGS3qJ3x1guTkPKz9mrQ2bC7e
+
+
+--- deploying probe_actions ---
+Program Id: 63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh
+
+Signature: 2eUgwA73uix6zpy2688eC6Mi2MLDRPpApThXsvBvXJfDa3jwzVR8BCDYuD8AeXDkB3kQURtzFT8u7A88Ps7x4Z7A
+
+
+--- deploying probe_crank ---
+Program Id: gzNGTCNmCBfxGJL5t5XExoeHsB9ooc4LUubZ41Po86K
+
+Signature: 2BHtdtSfbgZwmJ2HyrbxHrZiENzj6UKJiGh3vZrvC6vgACnRnTSctcRGdwndGCrRi9M5TZL8FdfwDfgoJu3ybppw
+
+
+--- deploying probe_oracle ---
+Program Id: ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW
+
+Signature: 3dWVWwQYJTUfpCkTcgQ32b68UwrasvrZ9TdkyHg3iQRNpL2KSPZ37TD4PnZjMucjDAYdMW9jC2QLWWygikzA8XQN
+
+
+--- deploying probe_session ---
+Program Id: UxGyQjXVBWXRwocPs1sjhV2BLWRmjwPc93yGVEn4XHd
+
+Signature: tMpuVYyjMR9a25CwuDreoeyo8enqgMwfi4aHUS8NfbWjm1RR73dMFeFvsXnsag4ddY9NsRufCjiciSQ3btTKuT8
+
+
+== 5. Final program IDs (should match Anchor.toml) ==
+probe_core       96ru2VBdLyqvtvVTwgAKs9e4k8DVqpero5dHvXTVkfEA
+probe_vrf        EzQLQDFAapDwyHnPsv9PUnt4mEbrLPfgnpBJmeu766fT
+probe_actions    63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh
+probe_crank      gzNGTCNmCBfxGJL5t5XExoeHsB9ooc4LUubZ41Po86K
+probe_oracle     ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW
+probe_session    UxGyQjXVBWXRwocPs1sjhV2BLWRmjwPc93yGVEn4XHd
+
+== Done. Balance remaining: ==
+3.547504386 SOL
+
+Transcript saved to deploy-log.txt
