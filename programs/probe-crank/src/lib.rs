@@ -34,6 +34,12 @@ pub mod probe_crank {
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let probe = &mut ctx.accounts.probe;
+        // See probe-vrf::initialize for why this guard exists: `init_if_needed`
+        // does not skip this body on a pre-existing account, so without the
+        // guard a repeat call wipes real scheduling history back to zero.
+        if probe.owner != Pubkey::default() {
+            return Ok(());
+        }
         probe.owner = ctx.accounts.user.key();
         probe.count = 0;
         probe.task_id = 0;

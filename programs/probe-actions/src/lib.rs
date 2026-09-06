@@ -41,9 +41,23 @@ pub mod probe_actions {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        ctx.accounts.probe.owner = ctx.accounts.user.key();
-        ctx.accounts.probe.count = 0;
-        ctx.accounts.milestone.high_value = 0;
+        // See probe-vrf::initialize for why these guards exist: `init_if_needed`
+        // does not skip this body on a pre-existing account, so without them a
+        // repeat call wipes real ping/milestone history back to zero. Each
+        // account is guarded independently since they're distinct PDAs.
+        //
+        // This also fixes a separate latent bug: `milestone.owner` was never
+        // set here at all, so it stayed `Pubkey::default()` forever and
+        // `update_milestone_direct`'s `has_one = owner` constraint could
+        // never be satisfied by any real wallet signer.
+        if ctx.accounts.probe.owner == Pubkey::default() {
+            ctx.accounts.probe.owner = ctx.accounts.user.key();
+            ctx.accounts.probe.count = 0;
+        }
+        if ctx.accounts.milestone.owner == Pubkey::default() {
+            ctx.accounts.milestone.owner = ctx.accounts.user.key();
+            ctx.accounts.milestone.high_value = 0;
+        }
         Ok(())
     }
 

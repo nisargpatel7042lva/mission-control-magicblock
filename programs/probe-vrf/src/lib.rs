@@ -42,6 +42,16 @@ pub mod probe_vrf {
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let probe = &mut ctx.accounts.probe;
+        // `init_if_needed` only skips the account-creation CPI when the PDA
+        // already exists - it does NOT skip this function body. Without this
+        // guard, re-clicking "Initialize" on an already-active probe would
+        // silently wipe its accumulated request/fulfillment history back to
+        // defaults. Solana zero-initializes new account data, so a real
+        // owner pubkey is never `Pubkey::default()` - that's the reliable
+        // "is this actually fresh?" check.
+        if probe.owner != Pubkey::default() {
+            return Ok(());
+        }
         probe.owner = ctx.accounts.payer.key();
         probe.status = STATUS_IDLE;
         probe.last_result = 0;

@@ -29,6 +29,12 @@ pub mod probe_session {
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let probe = &mut ctx.accounts.probe;
+        // See probe-vrf::initialize for why this guard exists: `init_if_needed`
+        // does not skip this body on a pre-existing account, so without the
+        // guard a repeat call wipes real ping history back to zero.
+        if probe.authority != Pubkey::default() {
+            return Ok(());
+        }
         probe.authority = ctx.accounts.user.key();
         probe.ping_count = 0;
         Ok(())
