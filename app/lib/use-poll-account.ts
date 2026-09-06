@@ -40,10 +40,15 @@ export function usePolledAccount<T = unknown>(
       }
     }
 
-    poll();
+    // Stagger each panel's poll tick by a small random offset so six panels
+    // mounting at once don't all hit the RPC in the same instant - spreads
+    // the request burst out instead of amplifying it every interval.
+    const jitter = Math.floor(Math.random() * 600);
+    const initial = setTimeout(poll, jitter);
     const id = setInterval(poll, intervalMs);
     return () => {
       alive = false;
+      clearTimeout(initial);
       clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
