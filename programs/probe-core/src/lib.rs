@@ -32,6 +32,12 @@ pub mod probe_core {
     /// probes (e.g. one per region) without colliding.
     pub fn initialize(ctx: Context<Initialize>, label: [u8; 16]) -> Result<()> {
         let probe = &mut ctx.accounts.probe;
+        // See probe-vrf::initialize for why this guard exists: `init_if_needed`
+        // does not skip this body on a pre-existing account, so without the
+        // guard a repeat call wipes real ping/commit history back to zero.
+        if probe.owner != Pubkey::default() {
+            return Ok(());
+        }
         probe.owner = ctx.accounts.user.key();
         probe.label = label;
         probe.ping_count = 0;
@@ -52,16 +58,16 @@ pub mod probe_core {
     }
 
     /// Delegate the probe PDA to an Ephemeral Rollup validator. Pass the
-    /// target validator identity as the first remaining account (region
+    /// target validator's identity as the first remaining account (region
     /// selection happens here).
     ///
     /// The seeds passed to `delegate_pda` must exactly reconstruct this
-    /// account real PDA derivation (`[PROBE_SEED, owner, label]` from
+    /// account's real PDA derivation (`[PROBE_SEED, owner, label]` from
     /// `Initialize`) - the delegation CPI uses them as `invoke_signed`
     /// signer seeds for the account itself, so anything else fails on-chain
     /// with a signer-mismatch error. `DelegateInput` only carries `payer`
     /// and the untyped `pda`, so `owner`/`label` are read back out of the
-    /// account own data first, mirroring `probe_session::delegate`.
+    /// account's own data first, mirroring `probe_session::delegate`.
     pub fn delegate(ctx: Context<DelegateInput>) -> Result<()> {
         let (owner, label) = {
             let data = ctx.accounts.pda.try_borrow_data()?;

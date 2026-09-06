@@ -29,6 +29,12 @@ pub mod probe_oracle {
 
     pub fn initialize(ctx: Context<Initialize>, feed_id: [u8; 32]) -> Result<()> {
         let probe = &mut ctx.accounts.probe;
+        // See probe-vrf::initialize for why this guard exists: `init_if_needed`
+        // does not skip this body on a pre-existing account, so without the
+        // guard a repeat call wipes real observation history back to zero.
+        if probe.owner != Pubkey::default() {
+            return Ok(());
+        }
         probe.owner = ctx.accounts.user.key();
         probe.feed_id = feed_id;
         probe.last_price = 0;
@@ -70,11 +76,11 @@ pub mod probe_oracle {
 }
 
 fn read_verified_price(price_update: &Account<PriceUpdateV2>, feed_id: &[u8; 32]) -> Result<Price> {
-    // get_price_no_older_than only checks verification_level (Full) and
-    // publish_time. Per the MagicBlock Pricing Oracle security guidance,
-    // VerificationLevel::Full alone is not proof of a genuine republisher
-    // update: account initialization also sets Full while writing a
-    // zero-value placeholder with posted_slot = 0. Require a nonzero
+    // `get_price_no_older_than` only checks `verification_level` (Full) and
+    // `publish_time`. Per the MagicBlock Pricing Oracle security guidance,
+    // `VerificationLevel::Full` alone is not proof of a genuine republisher
+    // update: account initialization also sets `Full` while writing a
+    // zero-value placeholder with `posted_slot = 0`. Require a nonzero
     // local posting slot as well, so an initialized-but-never-updated (or
     // otherwise not-yet-republished) account is rejected even before its
     // price/timestamp fields are inspected.
