@@ -317,7 +317,7 @@ async function main() {
   await runVrf(baseConnection, programs);
   await runActions(baseConnection, programs);
   await runCrank(baseConnection, programs);
-  await runOracle(programs);
+  await runOracle(baseConnection, programs);
   await runSession(baseConnection, programs, wallet);
 
   // -------------------------------------------------------------------------
@@ -675,7 +675,17 @@ async function main() {
     }
   }
 
-  async function runOracle(programs) {
+  // Pyth's own receiver program - the *expected* owner of a live
+  // `PriceUpdateV2` account. If the real on-chain owner is the Delegation
+  // Program instead, the account is currently delegated into an ephemeral
+  // rollup (base-layer ownership moves there while delegated - see
+  // `isDelegated()` above) and a base-layer-only reader like probe-oracle
+  // cannot deserialize it as `Account<PriceUpdateV2>` until it's committed
+  // back. Discovered from a real `AccountOwnedByWrongProgram` error, not
+  // assumed - see VERIFICATION-RESULTS.md from the run that found this.
+  const PYTH_RECEIVER_PROGRAM_ID = new PublicKey("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+
+  async function runOracle(conn, programs) {
     const P = "Oracle";
     results.oracle = {};
     for (const fixture of ORACLE_FIXTURES) {
@@ -687,6 +697,42 @@ async function main() {
           programs.oracle.methods.initialize(Array.from(fixture.feedId)).accounts({ user: owner, systemProgram: SystemProgram.programId }).rpc(),
         );
         logStep(P, `initialize (${fixture.label})`, true, { ms: initMs, signature: initSig });
+
+        // Real pre-check, not a guess: if MagicBlock's own republisher
+        // currently has this price_update account delegated into an ER, a
+        // base-layer observe_price call is guaranteed to fail with
+        // AccountOwnedByWrongProgram regardless of feed_id correctness.
+        // Poll its real owner for up to 20s in case this is a live
+        // delegate/commit cycle that resolves on its own, rather than
+        // burning a transaction we already know will fail.
+        const ownerPollStart = Date.now();
+        let priceUpdateInfo = await conn.getAccountInfo(fixture.priceUpdate);
+        while (
+          priceUpdateInfo?.owner?.equals(DELEGATION_PROGRAM_ID) &&
+          Date.now() - ownerPollStart < 20_000
+        ) {
+          await sleep(2000);
+          priceUpdateInfo = await conn.getAccountInfo(fixture.priceUpdate);
+        }
+        if (priceUpdateInfo?.owner?.equals(DELEGATION_PROGRAM_ID)) {
+          logStep(P, `observe_price (${fixture.label})`, false, {
+            note:
+              `price_update account (${fixture.priceUpdate.toBase58()}) is owned by the Delegation Program ` +
+              `(${DELEGATION_PROGRAM_ID.toBase58()}), not the Pyth receiver program (${PYTH_RECEIVER_PROGRAM_ID.toBase58()}), ` +
+              `even after ${Date.now() - ownerPollStart}ms of polling - it is currently delegated into an ephemeral rollup ` +
+              `on base layer's own account index. A base-layer-only reader cannot deserialize it as PriceUpdateV2 until it's ` +
+              `committed back. Real evidence, not assumed - skipping the doomed-to-fail transaction.`,
+          });
+          results.oracle[fixture.label] = {
+            error: "price_update account is currently delegated (owned by Delegation Program) on base layer",
+            observedOwner: priceUpdateInfo.owner.toBase58(),
+          };
+          continue;
+        } else if (priceUpdateInfo && !priceUpdateInfo.owner.equals(PYTH_RECEIVER_PROGRAM_ID)) {
+          logStep(P, `observe_price (${fixture.label}) owner check`, false, {
+            note: `price_update owner is ${priceUpdateInfo.owner.toBase58()}, neither the Pyth receiver program nor the Delegation Program - unexpected, proceeding anyway to see the real error.`,
+          });
+        }
 
         const { ms: obsMs, result: obsSig } = await timeIt(() =>
           programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
