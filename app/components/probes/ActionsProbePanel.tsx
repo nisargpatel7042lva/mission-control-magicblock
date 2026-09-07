@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { SystemProgram } from "@solana/web3.js";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { SystemProgram, Transaction } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
 
 import { useMissionControlPrograms, useAnchorCompatibleWallet } from "@/lib/use-programs";
 import { usePolledAccount } from "@/lib/use-poll-account";
 import { actionProbePda, milestonePda } from "@/lib/pdas";
 import { PROBE_ACTIONS_ID } from "@/lib/programs";
-import { delegateAccounts, commitAccounts } from "@/lib/delegation";
+import { delegateAccounts, commitAccounts, actionEscrowPda, topUpEscrowInstruction } from "@/lib/delegation";
 import { REGIONS, type RegionConfig } from "@/lib/regions";
 import { programForEndpoint } from "@/lib/region-provider";
 import { useEventLog } from "@/lib/event-log";
@@ -27,6 +27,7 @@ interface MilestoneAccount {
 
 export function ActionsProbePanel() {
   const wallet = useWallet();
+  const { connection } = useConnection();
   const anchorWallet = useAnchorCompatibleWallet();
   const programs = useMissionControlPrograms();
   const { log, update } = useEventLog();
@@ -156,6 +157,24 @@ export function ActionsProbePanel() {
           onClick={() =>
             run("commit + schedule action", async () => {
               if (!wallet.publicKey || !activeProgram) throw new Error("not ready");
+
+              // The post-commit action can only actually land once the
+              // escrow PDA it's authenticated against exists and holds a
+              // little SOL - see the note on topUpEscrowInstruction. This
+              // is a one-time cost per wallet (skipped once already funded).
+              const escrow = actionEscrowPda(wallet.publicKey);
+              const escrowInfo = await connection.getAccountInfo(escrow);
+              if (!escrowInfo || escrowInfo.lamports < 5_000_000) {
+                const topUpIx = topUpEscrowInstruction(wallet.publicKey, wallet.publicKey, 10_000_000);
+                const topUpTx = new Transaction().add(topUpIx);
+                topUpTx.feePayer = wallet.publicKey;
+                const { blockhash } = await connection.getLatestBlockhash();
+                topUpTx.recentBlockhash = blockhash;
+                if (!wallet.sendTransaction) throw new Error("wallet cannot send transactions");
+                const topUpSig = await wallet.sendTransaction(topUpTx, connection);
+                await connection.confirmTransaction(topUpSig, "confirmed");
+              }
+
               const acc = commitAccounts();
               return (activeProgram as any).methods
                 .commitAndUpdateMilestone()
