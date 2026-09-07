@@ -126,6 +126,69 @@ async function main() {
     const target = sigs.find((s) => s.signature !== sigs[sigs.length - 1].signature) || sigs[0];
     const tx = await baseConn.getTransaction(target.signature, { maxSupportedTransactionVersion: 0 });
     printLogs(`Base-layer tx ${target.signature}`, tx);
+
+    // If this is the known "escrow ... Unauthorized" failure, don't stop at
+    // the log message - pull the *actual pubkeys* the delegation program
+    // passed for escrow_auth/escrow in that inner CPI and compare them
+    // against what our own program (and this script) independently derive.
+    // That tells us for real whether this is an address-derivation mismatch
+    // (SDK/protocol version skew) or something else, instead of guessing.
+    const looksLikeEscrowAuthFailure = (tx?.meta?.logMessages || []).some((l) =>
+      l.includes("AnchorError caused by account: escrow"),
+    );
+    if (looksLikeEscrowAuthFailure) {
+      console.log("\n  This matches the known 'escrow ... Unauthorized' failure - decoding the exact accounts passed...");
+      const parsed = await baseConn.getParsedTransaction(target.signature, { maxSupportedTransactionVersion: 0 });
+      const allIx = [
+        ...(parsed?.transaction?.message?.instructions || []),
+        ...(parsed?.meta?.innerInstructions || []).flatMap((i) => i.instructions),
+      ];
+      const updateMilestoneIx = allIx.find(
+        (ix) => ix.programId?.toBase58?.() === PROBE_ACTIONS_ID.toBase58() || ix.programId === PROBE_ACTIONS_ID.toBase58(),
+      );
+      if (!updateMilestoneIx) {
+        console.log("  Could not find the probe-actions instruction in the parsed inner instructions - dumping raw for manual inspection:");
+        console.log(JSON.stringify(parsed?.meta?.innerInstructions, null, 2));
+      } else {
+        // Struct field order in UpdateMilestoneAction: milestone, probe, escrow_auth, escrow.
+        const rawAccounts = updateMilestoneIx.accounts || [];
+        const passed = rawAccounts.map((a) => (a.toBase58 ? a.toBase58() : String(a)));
+        const [passedMilestone, passedProbe, passedEscrowAuth, passedEscrow] = passed;
+        console.log(`  Accounts actually passed to UpdateMilestone (in order): ${JSON.stringify(passed, null, 2)}`);
+        console.log(`  [0] milestone    passed=${passedMilestone}  expected=${mile.toBase58()}  match=${passedMilestone === mile.toBase58()}`);
+        console.log(`  [1] probe        passed=${passedProbe}  expected=${pda.toBase58()}  match=${passedProbe === pda.toBase58()}`);
+        console.log(`  [2] escrow_auth  passed=${passedEscrowAuth}  expected(wallet)=${owner.toBase58()}  match=${passedEscrowAuth === owner.toBase58()}`);
+        const expectedEscrowFromPassedAuth = passedEscrowAuth
+          ? escrowPdaFromEscrowAuthority(new PublicKey(passedEscrowAuth), 255).toBase58()
+          : "n/a";
+        console.log(`  [3] escrow       passed=${passedEscrow}  our-funded=${escrow.toBase58()}  derived-from-passed-escrow_auth=${expectedEscrowFromPassedAuth}`);
+        console.log(`      escrow passed == our-funded escrow?        ${passedEscrow === escrow.toBase58()}`);
+        console.log(`      escrow passed == re-derived from passed auth? ${passedEscrow === expectedEscrowFromPassedAuth}`);
+        if (passedEscrow !== escrow.toBase58()) {
+          console.log(
+            "\n  => VERDICT: the delegation program passed a DIFFERENT escrow pubkey than the one we funded. " +
+              "That's an address-derivation mismatch, not a funding problem - the fix is to fund whichever " +
+              "address it actually passed (shown above), or find why our derivation differs from the deployed " +
+              "delegation program's (likely an ephemeral-rollups-sdk version skew between our Rust program's " +
+              "SDK version and the live devnet delegation program).",
+          );
+        } else if (passedEscrowAuth !== owner.toBase58()) {
+          console.log(
+            "\n  => VERDICT: escrow_auth passed was NOT our wallet, even though escrow_authority was set to " +
+              "the payer in commit_and_update_milestone. Worth checking whether CallHandler.escrow_authority " +
+              "needs an explicit AccountInfo matching the *signing* keypair used for the commit tx, not just 'a' wallet.",
+          );
+        } else {
+          console.log(
+            "\n  => VERDICT: escrow_auth and escrow addresses both match what we expect. The failure must be " +
+              "in the signer flag itself - meaning the delegation program's invoke_signed for this account " +
+              "either used different seeds/bump than ephemeral_balance_pda_from_payer computes, or didn't " +
+              "sign for this account at all in this SDK/network version. This needs a report to MagicBlock " +
+              "(Discord/GitHub) with this exact transaction as evidence.",
+          );
+        }
+      }
+    }
   }
 
   // 3. Escrow balance now, for comparison against what verify-e2e.js funded.
