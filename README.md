@@ -7,7 +7,7 @@ is *measured on screen*, not just claimed.
 
 Built solo for **Solana Blitz V8** (MagicBlock, Sep 4–11 2026).
 
-**Live demo:** https://mission-control-magicblock.vercel.app
+**Live demo:** https://mission-control-magicblock-live.vercel.app
 
 ## What it does
 
