@@ -93,9 +93,15 @@ const SEED_SESSION_PROBE = Buffer.from("session_probe");
 const VRF_PROGRAM_ID = new PublicKey("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
 const DEFAULT_QUEUE = new PublicKey("Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh");
 
-// Real devnet fixtures from MagicBlock's own magicblock-engine-examples repo
-// (oracle-priced-purchase/anchor/tests) - not invented. Tried in order; the
-// code comment in oracle-fixtures.ts already flags these could rotate.
+// Oracle fixtures - kept in sync with app/lib/oracle-fixtures.ts (see that
+// file's comment header for full sourcing/derivation notes: the account is
+// MagicBlock's live Pricing Oracle SOL/USD feed, PDA-derived and confirmed
+// against the address MagicBlock's own repo publishes; the feed_id is Pyth's
+// canonical Crypto.SOL/USD id from Hermes, one inference removed from
+// independent proof - if this ever reverts with UnexpectedFeed rather than
+// succeeding, that inference is the thing to revisit). The original two
+// fixtures here are kept as fallbacks but are confirmed dead on real devnet
+// (AccountNotInitialized) as of this session.
 function feedIdFromHex(hex) {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -103,12 +109,17 @@ function feedIdFromHex(hex) {
 }
 const ORACLE_FIXTURES = [
   {
-    label: "SOL/USD (fixture @ $100)",
+    label: "SOL/USD (MagicBlock Pricing Oracle, live)",
+    priceUpdate: new PublicKey("ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu"),
+    feedId: feedIdFromHex("ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"),
+  },
+  {
+    label: "SOL/USD (old example fixture @ $100, likely dead)",
     priceUpdate: new PublicKey("B8vx8v7SwZsmFYz3fkSJphr7uq34LoiVr18pimLG5FJM"),
     feedId: feedIdFromHex("969cefe5a1c3dc424aeaf191893d642799b8545431b5e2560e1cc78ccfdd91d6".slice(0, 64)),
   },
   {
-    label: "SOL/USD (fixture @ $50)",
+    label: "SOL/USD (old example fixture @ $50, likely dead)",
     priceUpdate: new PublicKey("EpdAP2KHQAXPccREjM1WsLiyKVcchYj82pv9sWZhYUY1"),
     feedId: feedIdFromHex("cd5b1dc2e5486ee8a1fa93a76ad56a1d15fef45c54fac50c7b489f1f3be0136a".slice(0, 64)),
   },
@@ -237,6 +248,13 @@ const report = []; // { probe, step, ok, ms, signature, note }
 const results = {}; // raw structured data per probe, dumped to JSON
 
 function logStep(probe, step, ok, extra) {
+  // A negative duration is physically impossible (can't confirm before you
+  // sent) - it means the local clock moved backward mid-call (an NTP
+  // correction, most likely), not a real measurement. Flag it loudly rather
+  // than silently clamp it to something that looks like a real number.
+  if (extra?.ms !== undefined && extra.ms < 0) {
+    extra = { ...extra, note: `${extra.note ? extra.note + " " : ""}[SUSPECT TIMING: negative duration, almost certainly a local clock jump mid-call - do not quote this number, ignore it]` };
+  }
   const line = { probe, step, ok, ...extra };
   report.push(line);
   const tag = ok ? "OK  " : "FAIL";
@@ -775,9 +793,21 @@ async function main() {
       logStep(P, "undelegate (asia ER)", true, { ms: undelMs, signature: undelSig });
       results.session.undelegateSig = undelSig;
 
-      const finalAccount = await programs.session.account.sessionProbe.fetch(pda);
+      // undelegate()'s commit_and_undelegate should carry the ER's latest
+      // ping_count back to base layer, but base-layer visibility of a
+      // just-committed account can lag the undelegate tx's own confirmation
+      // by a beat - poll for real instead of trusting one immediate read.
+      let finalAccount = await programs.session.account.sessionProbe.fetch(pda);
+      const pollStart = Date.now();
+      while (finalAccount.pingCount.toNumber() === 0 && Date.now() - pollStart < 15_000) {
+        await sleep(1000);
+        finalAccount = await programs.session.account.sessionProbe.fetch(pda);
+      }
       results.session.finalPingCount = finalAccount.pingCount.toString();
-      logStep(P, "final state read (base layer)", true, { note: `ping_count=${finalAccount.pingCount.toString()} (1 wallet ping + 3 session pings expected on top of prior runs)` });
+      results.session.finalReadPolledMs = Date.now() - pollStart;
+      logStep(P, "final state read (base layer)", finalAccount.pingCount.toNumber() > 0, {
+        note: `ping_count=${finalAccount.pingCount.toString()} after ${Date.now() - pollStart}ms of polling (1 wallet ping + 3 session pings expected on top of prior runs) - if still 0, the ER->base commit on undelegate did not carry the latest count, worth a closer look`,
+      });
     } catch (e) {
       logStep(P, "unhandled error", false, { note: e.message || String(e) });
       results.session = { ...(results.session || {}), error: e.message || String(e) };
