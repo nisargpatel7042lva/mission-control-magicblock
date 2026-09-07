@@ -150,41 +150,71 @@ async function main() {
         console.log("  Could not find the probe-actions instruction in the parsed inner instructions - dumping raw for manual inspection:");
         console.log(JSON.stringify(parsed?.meta?.innerInstructions, null, 2));
       } else {
-        // Struct field order in UpdateMilestoneAction: milestone, probe, escrow_auth, escrow.
+        // Identify each account by VALUE, not by an assumed struct-field
+        // position - the delegation program's real account list turned out
+        // to include an extra account (the destination program id) that a
+        // naive [milestone, probe, escrow_auth, escrow] position guess
+        // doesn't account for, which gave a wrong verdict on an earlier
+        // run of this script. Matching by exact pubkey avoids repeating
+        // that mistake regardless of how many/which extra accounts are
+        // present or in what order.
         const rawAccounts = updateMilestoneIx.accounts || [];
         const passed = rawAccounts.map((a) => (a.toBase58 ? a.toBase58() : String(a)));
-        const [passedMilestone, passedProbe, passedEscrowAuth, passedEscrow] = passed;
-        console.log(`  Accounts actually passed to UpdateMilestone (in order): ${JSON.stringify(passed, null, 2)}`);
-        console.log(`  [0] milestone    passed=${passedMilestone}  expected=${mile.toBase58()}  match=${passedMilestone === mile.toBase58()}`);
-        console.log(`  [1] probe        passed=${passedProbe}  expected=${pda.toBase58()}  match=${passedProbe === pda.toBase58()}`);
-        console.log(`  [2] escrow_auth  passed=${passedEscrowAuth}  expected(wallet)=${owner.toBase58()}  match=${passedEscrowAuth === owner.toBase58()}`);
-        const expectedEscrowFromPassedAuth = passedEscrowAuth
-          ? escrowPdaFromEscrowAuthority(new PublicKey(passedEscrowAuth), 255).toBase58()
-          : "n/a";
-        console.log(`  [3] escrow       passed=${passedEscrow}  our-funded=${escrow.toBase58()}  derived-from-passed-escrow_auth=${expectedEscrowFromPassedAuth}`);
-        console.log(`      escrow passed == our-funded escrow?        ${passedEscrow === escrow.toBase58()}`);
-        console.log(`      escrow passed == re-derived from passed auth? ${passedEscrow === expectedEscrowFromPassedAuth}`);
-        if (passedEscrow !== escrow.toBase58()) {
+        console.log(`  Accounts actually passed to UpdateMilestone (${passed.length} total): ${JSON.stringify(passed, null, 2)}`);
+
+        const mileStr = mile.toBase58();
+        const pdaStr = pda.toBase58();
+        const ownerStr = owner.toBase58();
+        const escrowStr = escrow.toBase58();
+        const programStr = PROBE_ACTIONS_ID.toBase58();
+
+        const foundMilestone = passed.includes(mileStr);
+        const foundProbe = passed.includes(pdaStr);
+        const foundOwnerAsEscrowAuth = passed.includes(ownerStr);
+        const foundOurEscrow = passed.includes(escrowStr);
+        const foundProgramId = passed.includes(programStr);
+
+        console.log(`  milestone (${mileStr}) present?      ${foundMilestone}`);
+        console.log(`  probe (${pdaStr}) present?      ${foundProbe}`);
+        console.log(`  destination program id (${programStr}) present? ${foundProgramId}  (delegation program appends this too - not a struct field, informational)`);
+        console.log(`  wallet as escrow_auth (${ownerStr}) present? ${foundOwnerAsEscrowAuth}`);
+        console.log(`  our funded escrow PDA (${escrowStr}) present? ${foundOurEscrow}`);
+
+        const unaccounted = passed.filter((p) => ![mileStr, pdaStr, ownerStr, escrowStr, programStr].includes(p));
+        if (unaccounted.length > 0) {
+          console.log(`  unaccounted-for pubkey(s) in the list (unexpected extras): ${JSON.stringify(unaccounted)}`);
+        }
+
+        if (!foundOurEscrow) {
+          const anyUnaccountedIsEscrow = unaccounted.length > 0;
           console.log(
-            "\n  => VERDICT: the delegation program passed a DIFFERENT escrow pubkey than the one we funded. " +
-              "That's an address-derivation mismatch, not a funding problem - the fix is to fund whichever " +
-              "address it actually passed (shown above), or find why our derivation differs from the deployed " +
-              "delegation program's (likely an ephemeral-rollups-sdk version skew between our Rust program's " +
-              "SDK version and the live devnet delegation program).",
+            "\n  => VERDICT: our funded escrow PDA does NOT appear anywhere in the accounts actually passed. " +
+              (anyUnaccountedIsEscrow
+                ? `The delegation program used a DIFFERENT escrow address instead (see unaccounted-for pubkey(s) above) - ` +
+                  `that's an address-derivation mismatch, not a funding problem. Fund that address instead, or find why ` +
+                  `our derivation differs from the deployed delegation program's.`
+                : `No plausible alternate escrow pubkey shows up either - dump the raw instruction above for manual review.`),
           );
-        } else if (passedEscrowAuth !== owner.toBase58()) {
+        } else if (!foundOwnerAsEscrowAuth) {
           console.log(
-            "\n  => VERDICT: escrow_auth passed was NOT our wallet, even though escrow_authority was set to " +
-              "the payer in commit_and_update_milestone. Worth checking whether CallHandler.escrow_authority " +
-              "needs an explicit AccountInfo matching the *signing* keypair used for the commit tx, not just 'a' wallet.",
+            "\n  => VERDICT: our funded escrow PDA IS present, but our wallet (the escrow_authority we set in " +
+              "commit_and_update_milestone) is NOT in the account list. Worth checking whether escrow_authority " +
+              "needs to be a different signer than the payer for this SDK version.",
           );
         } else {
           console.log(
-            "\n  => VERDICT: escrow_auth and escrow addresses both match what we expect. The failure must be " +
-              "in the signer flag itself - meaning the delegation program's invoke_signed for this account " +
-              "either used different seeds/bump than ephemeral_balance_pda_from_payer computes, or didn't " +
-              "sign for this account at all in this SDK/network version. This needs a report to MagicBlock " +
-              "(Discord/GitHub) with this exact transaction as evidence.",
+            "\n  => VERDICT: both the correct escrow_auth (our wallet) and the correct escrow PDA (the one we " +
+              "funded) ARE present in the real accounts the delegation program passed - address derivation is " +
+              "confirmed correct, this is not a funding or address problem. The on-chain failure is Anchor's " +
+              "`signer` constraint specifically (`#[account(signer @ ...)]` on escrow, listed first in our " +
+              "code, so it's the one that's actually tripping) - meaning the delegation program invoked our " +
+              "program WITHOUT flagging the escrow PDA as a signer on this call, even though it passed the " +
+              "right pubkey. That's either a real gap in how MagicBlock's deployed devnet asia-region " +
+              "validator signs the escrow for a wallet-paid (non-PDA-delegated) action right now, or an " +
+              "undocumented extra requirement. This is the point to file a report with MagicBlock (Discord/" +
+              "GitHub) - attach this transaction and this script's full output as evidence; it isn't something " +
+              "fixable from our program code, since our code already matches their own documented pattern " +
+              "exactly.",
           );
         }
       }

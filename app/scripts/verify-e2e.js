@@ -79,6 +79,23 @@ const PROBE_CRANK_ID = new PublicKey("gzNGTCNmCBfxGJL5t5XExoeHsB9ooc4LUubZ41Po86
 const PROBE_ORACLE_ID = new PublicKey("ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW");
 const PROBE_SESSION_ID = new PublicKey("UxGyQjXVBWXRwocPs1sjhV2BLWRmjwPc93yGVEn4XHd");
 
+// Pyth's own receiver program - the *expected* owner of a live
+// `PriceUpdateV2` account. If the real on-chain owner is the Delegation
+// Program instead, the account is currently delegated into an ephemeral
+// rollup (base-layer ownership moves there while delegated - see
+// `isDelegated()` below) and a base-layer-only reader like probe-oracle
+// cannot deserialize it as `Account<PriceUpdateV2>` until it's committed
+// back. Discovered from a real `AccountOwnedByWrongProgram` error, not
+// assumed - see VERIFICATION-RESULTS.md from the run that found this.
+// Declared at module top level (NOT inside main()) on purpose: main()'s
+// nested `async function runOracle` declarations are hoisted, so a const
+// declared textually just above them but still inside main()'s body is
+// only initialized when that line actually executes in main()'s call
+// sequence - by the time `await runOracle(...)` runs, execution hadn't
+// reached it yet, so every reference threw "Cannot access before
+// initialization". Real bug, caught from a real run, fixed for real.
+const PYTH_RECEIVER_PROGRAM_ID = new PublicKey("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
+
 const GPL_SESSION_PROGRAM_ID = new PublicKey("KeyspM2ssCJbqUhQ4k7sveSiY4WjnYsrXkC8oDbwde5");
 const SESSION_TOKEN_V2_SEED = Buffer.from("session_token_v2");
 
@@ -674,16 +691,6 @@ async function main() {
       results.crank = { ...(results.crank || {}), error: e.message || String(e) };
     }
   }
-
-  // Pyth's own receiver program - the *expected* owner of a live
-  // `PriceUpdateV2` account. If the real on-chain owner is the Delegation
-  // Program instead, the account is currently delegated into an ephemeral
-  // rollup (base-layer ownership moves there while delegated - see
-  // `isDelegated()` above) and a base-layer-only reader like probe-oracle
-  // cannot deserialize it as `Account<PriceUpdateV2>` until it's committed
-  // back. Discovered from a real `AccountOwnedByWrongProgram` error, not
-  // assumed - see VERIFICATION-RESULTS.md from the run that found this.
-  const PYTH_RECEIVER_PROGRAM_ID = new PublicKey("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
 
   async function runOracle(conn, programs) {
     const P = "Oracle";
