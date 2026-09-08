@@ -32,15 +32,31 @@
 //! which is exactly the case for every base-layer transaction while the
 //! feed is delegated elsewhere. Per the pricing-oracle dev-skill reference
 //! ("Make the feed available in that ER and read it there"), the fix is to
-//! run `observe_price` on the SAME Ephemeral Rollup the feed is delegated
-//! to, not on base layer. That requires `PriceProbe` itself to be
-//! delegate-able so the whole transaction (probe + feed) is visible to one
-//! runtime; the `delegate`/`commit`/`undelegate` instructions below add
-//! exactly that, mirroring `probe-core`'s already-verified pattern. The
-//! client (see `app/lib/router.ts`, `verify-e2e.js`'s `getDelegationStatus`)
-//! discovers which validator the feed is currently on via MagicBlock's
-//! router `getDelegationStatus` and pins this probe's delegation to that
-//! same validator via `DelegateConfig.validator`.
+//! run `observe_price` on an Ephemeral Rollup, not on base layer. That
+//! requires `PriceProbe` itself to be delegate-able so the whole transaction
+//! (probe + feed) is visible to one runtime; the `delegate`/`commit`/
+//! `undelegate` instructions below add exactly that, mirroring
+//! `probe-core`'s already-verified pattern.
+//!
+//! CORRECTION, source-verified against `magicblock-labs/real-time-pricing-
+//! oracle`'s and `magicblock-labs/delegation-program`'s actual Rust source
+//! (a prior version of this comment guessed the feed is pinned to one
+//! specific validator, discoverable via router `getDelegationStatus` - that
+//! was wrong, caught by a real `-32604 "account has been delegated to
+//! unknown ER node: 11111111111111111111111111111111"` router error on a
+//! real devnet run): the oracle program delegates its feed accounts via the
+//! delegation program's `DelegateWithAnyValidator` entrypoint
+//! (`real-time-pricing-oracle/program/ephemeral-oracle/.../lib.rs`,
+//! `DELEGATE_WITH_ANY_VALIDATOR_DISCRIMINATOR`), passing
+//! `validator: Some(system_program::id())` - a deliberate sentinel this
+//! entrypoint alone is allowed to set (`delegation-program/src/processor/
+//! fast/delegate.rs`'s `allow_system_program_validator` guard), meaning the
+//! feed is intentionally NOT pinned to one ER: it's meant to be readable
+//! from any of them, not routed to a single node the way an ordinary
+//! delegated PDA is. So there is no "same validator" to discover or pin to
+//! - the client instead just delegates this probe the ordinary way (default
+//! validator, no override) to the same shared devnet ER every other probe
+//! in this app already uses, and reads the feed there.
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::{commit, delegate, ephemeral};
@@ -108,15 +124,13 @@ pub mod probe_oracle {
         Ok(())
     }
 
-    /// Delegate this probe to the Ephemeral Rollup validator currently
-    /// hosting the live price feed it reads. Pass that validator's identity
-    /// as the first remaining account (the client discovers it via router
-    /// `getDelegationStatus` for the feed's `price_update` account - see the
-    /// module doc comment above). Delegating to the wrong validator (or
-    /// none, letting the delegation program pick a default) would put this
-    /// probe on a different ER than the feed, where the feed is still not
-    /// visible with its real owner - the whole point of this instruction is
-    /// pinning both to the same runtime.
+    /// Delegate this probe to an Ephemeral Rollup validator so it can be
+    /// used in the same transaction as the (any-validator-delegated) price
+    /// feed - see the module doc comment above for why there's no specific
+    /// validator to pin to here, unlike `probe_core`/`probe_actions`, which
+    /// accept an optional validator override the same way (first remaining
+    /// account) for region selection. The client just omits it and gets the
+    /// default validator, same as every other probe in this app.
     ///
     /// `DelegateInput` only carries `payer` and the untyped `pda`, so
     /// `owner`/`feed_id` are read back out of the account's own data first,

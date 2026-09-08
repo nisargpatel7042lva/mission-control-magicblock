@@ -142,30 +142,6 @@ const ORACLE_FIXTURES = [
 const BASE_LAYER_RPC = process.env.RPC_URL || "https://rpc.magicblock.app/devnet";
 const PUBLIC_DEVNET_RPC = "https://api.devnet.solana.com";
 const ASIA_ER_RPC = "https://devnet-as.magicblock.app/";
-const ROUTER_RPC = "https://devnet-router.magicblock.app/";
-
-/**
- * Router `getDelegationStatus` - MagicBlock's own account-to-ER routing
- * lookup (magicblock dev skill, debugging.md: a JSON-RPC POST with exactly
- * one account in `params`, response shape reproduced from that doc, not
- * guessed). Used below to discover which specific ER validator currently
- * hosts the live Pricing Oracle SOL/USD feed, so probe-oracle's PriceProbe
- * can be delegated to that SAME validator - see the real root-cause writeup
- * in programs/probe-oracle/src/lib.rs's module doc comment and
- * app/lib/router.ts (the browser-side twin of this same lookup, used by
- * OracleProbePanel.tsx).
- */
-async function getDelegationStatus(pubkeyBase58) {
-  const res = await fetch(ROUTER_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getDelegationStatus", params: [pubkeyBase58] }),
-  });
-  if (!res.ok) throw new Error(`router getDelegationStatus HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.error) throw new Error(`router getDelegationStatus RPC error: ${JSON.stringify(json.error)}`);
-  return json.result; // { isDelegated, fqdn?, delegationRecord?: { authority, owner, delegationSlot, lamports } }
-}
 
 function toLabel16(label) {
   const out = new Uint8Array(16);
@@ -742,21 +718,31 @@ async function main() {
         logStep(P, `initialize (${fixture.label})`, true, { ms: initMs, signature: initSig });
         results.oracle[fixture.label].initSig = initSig;
 
-        // Real router lookup, not a guess: ask MagicBlock's own router
-        // where this feed currently lives. It's ER-native by design (see
-        // programs/probe-oracle/src/lib.rs's module doc comment), so on
-        // base layer it normally shows owned by the Delegation Program -
-        // confirmed on a real prior run, not assumed (see
-        // PYTH_RECEIVER_PROGRAM_ID's comment above).
-        const feedStatus = await getDelegationStatus(fixture.priceUpdate.toBase58());
-        results.oracle[fixture.label].feedDelegationStatus = feedStatus;
+        // Real, direct check, not router-dependent: is the feed currently
+        // delegated? A prior version of this script asked the router
+        // getDelegationStatus which ER validator "owns" the feed and tried
+        // to pin this probe to that same one - that call itself failed on a
+        // real run with `-32604 "account has been delegated to unknown ER
+        // node: 11111111111111111111111111111111"`. Traced to real source
+        // (magicblock-labs/real-time-pricing-oracle +
+        // magicblock-labs/delegation-program, not guessed): the oracle
+        // delegates its feeds via the delegation program's
+        // `DelegateWithAnyValidator` entrypoint with
+        // `validator: Some(system_program::id())` - a deliberate sentinel
+        // meaning the feed is intentionally NOT pinned to one ER, it's
+        // meant to be readable from any of them. So there's no specific
+        // validator to discover - just use the same shared Asia ER every
+        // other probe in this app already uses (see programs/probe-oracle/
+        // src/lib.rs's module doc comment for the full writeup).
+        const feedOwnerInfo = await conn.getAccountInfo(fixture.priceUpdate);
+        const feedIsDelegated = !!feedOwnerInfo && feedOwnerInfo.owner.equals(DELEGATION_PROGRAM_ID);
+        logStep(P, `feed ownership check (${fixture.label})`, true, {
+          note: feedIsDelegated
+            ? `owned by the Delegation Program on base layer - ER-delegated, reading via ${ASIA_ER_RPC}`
+            : `owned by ${feedOwnerInfo?.owner?.toBase58() ?? "unknown (account not found)"} - reading on base layer`,
+        });
 
-        if (!feedStatus?.isDelegated) {
-          // Real evidence says the feed's true state is on base layer right
-          // now - the original direct read is correct as-is.
-          logStep(P, `router: feed is not ER-delegated (${fixture.label})`, true, {
-            note: "reading price_update on base layer",
-          });
+        if (!feedIsDelegated) {
           const { ms: obsMs, result: obsSig } = await timeIt(() =>
             programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
           );
@@ -778,60 +764,26 @@ async function main() {
           return; // first fixture that works is enough - stop here
         }
 
-        const targetValidator = new PublicKey(feedStatus.delegationRecord.authority);
-        const feedFqdn = feedStatus.fqdn;
-        logStep(P, `router: feed is ER-delegated (${fixture.label})`, true, {
-          note: `validator=${targetValidator.toBase58()} fqdn=${feedFqdn} original_owner=${feedStatus.delegationRecord.owner} delegation_slot=${feedStatus.delegationRecord.delegationSlot}`,
-        });
-
-        // Make sure our own PriceProbe is delegated to that exact
-        // validator before trying to read the feed there - the feed's ER
-        // placement can differ between runs, so don't trust a stale
-        // delegation from a prior run without checking.
         let { delegated: probeDelegated } = await isDelegated(conn, pda);
-        if (probeDelegated) {
-          const probeStatus = await getDelegationStatus(pda.toBase58());
-          if (probeStatus?.isDelegated && probeStatus.delegationRecord?.authority === targetValidator.toBase58() && probeStatus.fqdn) {
-            logStep(P, `probe already delegated to the right validator (${fixture.label})`, true, { note: probeStatus.fqdn });
-          } else if (probeStatus?.isDelegated && probeStatus.fqdn) {
-            const { program: erOraclePrev } = erProgram(probeOracleIdl, probeStatus.fqdn);
-            const commitAcc = commitAccounts();
-            const { result: undelSig } = await timeIt(() =>
-              erOraclePrev.methods.undelegate().accounts({ payer: owner, probe: pda, ...commitAcc }).rpc(),
-            );
-            logStep(P, `undelegate stale probe delegation (${fixture.label})`, true, {
-              signature: undelSig,
-              note: `was on ${probeStatus.fqdn}, feed is now on ${feedFqdn}`,
-            });
-            probeDelegated = false;
-          }
-        }
-
         if (!probeDelegated) {
           const acc = delegateAccounts(pda, PROBE_ORACLE_ID);
           const { ms: delMs, result: delSig } = await timeIt(() =>
-            programs.oracle.methods
-              .delegate()
-              .accounts({ payer: owner, pda, ...acc })
-              .remainingAccounts([{ pubkey: targetValidator, isWritable: false, isSigner: false }])
-              .rpc(),
+            programs.oracle.methods.delegate().accounts({ payer: owner, pda, ...acc }).rpc(),
           );
-          logStep(P, `delegate probe -> feed's validator (${fixture.label})`, true, {
-            ms: delMs,
-            signature: delSig,
-            note: `validator=${targetValidator.toBase58()}`,
-          });
+          logStep(P, `delegate probe -> asia ER (${fixture.label})`, true, { ms: delMs, signature: delSig });
           results.oracle[fixture.label].delegateSig = delSig;
+        } else {
+          logStep(P, `delegate (${fixture.label})`, true, { note: "already delegated" });
         }
 
-        const { program: erOracle } = erProgram(probeOracleIdl, feedFqdn);
+        const { program: erOracle } = erProgram(probeOracleIdl, ASIA_ER_RPC);
         const { ms: obsMs, result: obsSig } = await timeIt(() =>
           erOracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
         );
         const account = await erOracle.account.priceProbe.fetch(pda);
         const price = Number(account.lastPrice.toString()) * Math.pow(10, account.lastExponent);
         const ageSeconds = Math.floor(Date.now() / 1000 - account.lastPublishTime.toNumber());
-        logStep(P, `observe_price (${fixture.label}, ${feedFqdn})`, true, {
+        logStep(P, `observe_price (${fixture.label}, asia ER)`, true, {
           ms: obsMs,
           signature: obsSig,
           note: `price=${price.toFixed(4)} publish_time=${account.lastPublishTime.toString()} age=${ageSeconds}s observations=${account.observationCount.toString()}`,
@@ -842,7 +794,7 @@ async function main() {
           lastPublishTime: account.lastPublishTime.toString(),
           ageSecondsAtCheck: ageSeconds,
           observationCount: account.observationCount.toString(),
-          erEndpoint: feedFqdn,
+          erEndpoint: ASIA_ER_RPC,
         });
 
         // Commit + undelegate so the probe doesn't sit in a delegated state

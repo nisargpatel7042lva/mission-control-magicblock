@@ -39,12 +39,14 @@
 // with `UnexpectedFeed` rather than succeeding, that's the piece to
 // revisit.
 //
-// This feed is normally delegated into a specific Ephemeral Rollup (see
-// probe-oracle's module doc comment in programs/probe-oracle/src/lib.rs for
-// the full root-cause writeup) - reading it correctly requires discovering
-// that validator via `getDelegationStatus` (see `./router.ts`) and running
-// `observe_price` there, which is what `OracleProbePanel` and
-// `verify-e2e.js` now do instead of a plain base-layer call.
+// This feed is normally delegated into an Ephemeral Rollup rather than
+// living on base layer (see probe-oracle's module doc comment in
+// programs/probe-oracle/src/lib.rs for the full, source-verified root-cause
+// writeup: it's delegated in a documented "any validator" mode, not pinned
+// to one ER, so `OracleProbePanel` and `verify-e2e.js` check its real
+// on-chain owner and, when delegated, read it via the same shared Asia ER
+// every other probe in this app already uses, instead of a plain
+// base-layer call).
 //
 // The original two "old example fixture" accounts (B8vx8v7S...@$100,
 // EpdAP2KH...@$50) were dropped from this list on 2026-09-08: confirmed

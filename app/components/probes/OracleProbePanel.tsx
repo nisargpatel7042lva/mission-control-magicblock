@@ -10,26 +10,29 @@ import { usePolledAccount } from "@/lib/use-poll-account";
 import { oracleProbePda } from "@/lib/pdas";
 import { PROBE_ORACLE_ID } from "@/lib/programs";
 import { ORACLE_FIXTURES } from "@/lib/oracle-fixtures";
-import { DELEGATION_PROGRAM_ID, delegateAccounts, commitAccounts } from "@/lib/delegation";
-import { getDelegationStatus } from "@/lib/router";
+import { DELEGATION_PROGRAM_ID, delegateAccounts } from "@/lib/delegation";
+import { REGIONS } from "@/lib/regions";
 import { programForEndpoint } from "@/lib/region-provider";
 import { useEventLog } from "@/lib/event-log";
 import probeOracleIdl from "@/lib/idl/probe_oracle.json";
 import { ActionButton, Badge, ButtonRow, Panel, Stat, StatGrid } from "../ui";
 
 const SOURCE = "Pricing Oracle";
+const ORACLE_ER = REGIONS[0]; // Asia - same shared ER every other probe in this app uses.
 
 /**
- * MagicBlock's Pricing Oracle is ER-native by design (see
- * programs/probe-oracle/src/lib.rs's module doc comment for the full,
- * source-verified writeup): the live feed is normally delegated into a
- * specific Ephemeral Rollup, so a base-layer-only read fails with an
- * owner-mismatch error whenever that's the case. This reads the feed
- * correctly either way: check the router first, and if the feed is
- * currently ER-delegated, delegate this probe to that SAME validator (so
- * both accounts are visible to one runtime) before observing there -
- * otherwise read directly on base layer, which is correct when the router
- * says the feed isn't delegated right now.
+ * MagicBlock's Pricing Oracle feed is delegated into an Ephemeral Rollup
+ * (see programs/probe-oracle/src/lib.rs's module doc comment for the
+ * source-verified writeup of exactly how), so a base-layer-only read fails
+ * with an owner-mismatch error whenever that's the case - checked here
+ * directly against the account's real on-chain owner, not via router
+ * getDelegationStatus (that call reliably errors for this specific feed:
+ * it's delegated in a documented "any validator" mode with no single ER to
+ * name, real error confirmed on a real devnet run: `-32604 "account has
+ * been delegated to unknown ER node: 11111111111111111111111111111111"`).
+ * Since "any validator" means any ER can see it, this just delegates our
+ * own probe the ordinary way to the same shared Asia ER every other probe
+ * here already uses, and reads the feed there.
  */
 async function observePriceRouted(
   programs: NonNullable<ReturnType<typeof useMissionControlPrograms>>,
@@ -39,9 +42,10 @@ async function observePriceRouted(
   probePda: PublicKey,
   priceUpdate: PublicKey,
 ): Promise<{ sig: string; erEndpoint: string | null }> {
-  const feedStatus = await getDelegationStatus(priceUpdate.toBase58());
+  const feedInfo = await connection.getAccountInfo(priceUpdate);
+  const feedIsDelegated = !!feedInfo && feedInfo.owner.equals(DELEGATION_PROGRAM_ID);
 
-  if (!feedStatus.isDelegated) {
+  if (!feedIsDelegated) {
     const sig = await programs.oracle.methods
       .observePrice()
       .accounts({ probe: probePda, priceUpdate } as any)
@@ -49,48 +53,23 @@ async function observePriceRouted(
     return { sig, erEndpoint: null };
   }
 
-  const targetValidator = new PublicKey(feedStatus.delegationRecord!.authority);
-  const feedFqdn = feedStatus.fqdn!;
-
   const probeInfo = await connection.getAccountInfo(probePda);
   const probeIsDelegated = !!probeInfo && probeInfo.owner.equals(DELEGATION_PROGRAM_ID);
 
-  if (probeIsDelegated) {
-    const probeStatus = await getDelegationStatus(probePda.toBase58());
-    if (probeStatus.isDelegated && probeStatus.delegationRecord?.authority === targetValidator.toBase58() && probeStatus.fqdn) {
-      // Already delegated to the right validator - read straight from there.
-      const erOracle = programForEndpoint(probeOracleIdl as any, probeStatus.fqdn, anchorWallet);
-      const sig = await (erOracle as any).methods
-        .observePrice()
-        .accounts({ probe: probePda, priceUpdate } as any)
-        .rpc();
-      return { sig, erEndpoint: probeStatus.fqdn };
-    }
-    if (probeStatus.isDelegated && probeStatus.fqdn) {
-      // Delegated, but to a stale validator (the feed moved ER since our
-      // last observation) - undelegate before re-delegating to the current one.
-      const erStale = programForEndpoint(probeOracleIdl as any, probeStatus.fqdn, anchorWallet);
-      const commitAcc = commitAccounts();
-      await (erStale as any).methods
-        .undelegate()
-        .accounts({ payer, probe: probePda, ...commitAcc } as any)
-        .rpc();
-    }
+  if (!probeIsDelegated) {
+    const acc = delegateAccounts(probePda, PROBE_ORACLE_ID);
+    await (programs.oracle.methods as any)
+      .delegate()
+      .accounts({ payer, pda: probePda, ...acc } as any)
+      .rpc();
   }
 
-  const acc = delegateAccounts(probePda, PROBE_ORACLE_ID);
-  await (programs.oracle.methods as any)
-    .delegate()
-    .accounts({ payer, pda: probePda, ...acc } as any)
-    .remainingAccounts([{ pubkey: targetValidator, isWritable: false, isSigner: false }])
-    .rpc();
-
-  const erOracle = programForEndpoint(probeOracleIdl as any, feedFqdn, anchorWallet);
+  const erOracle = programForEndpoint(probeOracleIdl as any, ORACLE_ER.erRpc, anchorWallet);
   const sig = await (erOracle as any).methods
     .observePrice()
     .accounts({ probe: probePda, priceUpdate } as any)
     .rpc();
-  return { sig, erEndpoint: feedFqdn };
+  return { sig, erEndpoint: ORACLE_ER.erRpc };
 }
 
 interface OracleAccount {
@@ -181,7 +160,7 @@ export function OracleProbePanel() {
       accent="emerald"
       right={
         <div className="flex items-center gap-2">
-          <Badge tone={erEndpoint ? "emerald" : "zinc"}>{erEndpoint ? "on ER" : "base layer"}</Badge>
+          <Badge tone={erEndpoint ? "emerald" : "zinc"}>{erEndpoint ? `on ${ORACLE_ER.label}` : "base layer"}</Badge>
           {ageSeconds !== null && (
             <Badge tone={ageSeconds > 60 ? "rose" : ageSeconds > 30 ? "amber" : "emerald"}>{ageSeconds}s old</Badge>
           )}
@@ -256,10 +235,9 @@ export function OracleProbePanel() {
         </ActionButton>
       </ButtonRow>
       <p className="text-[11px] text-zinc-500">
-        MagicBlock&apos;s Pricing Oracle is ER-native, so this feed is often delegated into a specific
-        Ephemeral Rollup rather than living on base layer - <span className="text-amber-400">Observe price</span>{" "}
-        asks the router where it currently is and reads it there automatically, delegating this probe to
-        the same validator on first use.
+        This feed is often delegated into an Ephemeral Rollup rather than living on base layer -{" "}
+        <span className="text-amber-400">Observe price</span> checks its real owner and reads it on{" "}
+        {ORACLE_ER.label} automatically when that&apos;s the case, delegating this probe there on first use.
       </p>
     </Panel>
   );
