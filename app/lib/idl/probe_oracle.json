@@ -8,6 +8,226 @@
   },
   "instructions": [
     {
+      "name": "commit",
+      "docs": [
+        "Commit the probe's latest recorded observation back to base layer",
+        "without releasing delegation."
+      ],
+      "discriminator": [
+        223,
+        140,
+        142,
+        165,
+        229,
+        208,
+        156,
+        74
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "delegate",
+      "docs": [
+        "Delegate this probe to the Ephemeral Rollup validator currently",
+        "hosting the live price feed it reads. Pass that validator's identity",
+        "as the first remaining account (the client discovers it via router",
+        "`getDelegationStatus` for the feed's `price_update` account - see the",
+        "module doc comment above). Delegating to the wrong validator (or",
+        "none, letting the delegation program pick a default) would put this",
+        "probe on a different ER than the feed, where the feed is still not",
+        "visible with its real owner - the whole point of this instruction is",
+        "pinning both to the same runtime.",
+        "",
+        "`DelegateInput` only carries `payer` and the untyped `pda`, so",
+        "`owner`/`feed_id` are read back out of the account's own data first,",
+        "mirroring `probe_core::delegate`."
+      ],
+      "discriminator": [
+        90,
+        147,
+        75,
+        178,
+        85,
+        88,
+        4,
+        137
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "signer": true
+        },
+        {
+          "name": "buffer_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                198,
+                70,
+                164,
+                253,
+                211,
+                85,
+                113,
+                97,
+                35,
+                63,
+                169,
+                251,
+                171,
+                74,
+                128,
+                159,
+                25,
+                59,
+                139,
+                26,
+                6,
+                43,
+                109,
+                25,
+                24,
+                81,
+                96,
+                167,
+                170,
+                237,
+                47,
+                93
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_pda",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pda"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "pda",
+          "writable": true
+        },
+        {
+          "name": "owner_program",
+          "address": "ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -105,8 +325,155 @@
             "The MagicBlock Pricing Oracle's republished feed account. Its address",
             "(not only its type) must be the one the application configured for",
             "this feed - checked here via the `feed_id` match, matching the",
-            "consumer safety checklist."
+            "consumer safety checklist. This same context runs unchanged on base",
+            "layer or on an ER - Anchor's owner check only passes when the",
+            "runtime it's actually processing on can see this account with its",
+            "real (non-delegation-program) owner, which is why `delegate` above",
+            "exists: pin `probe` to whichever ER `price_update` currently is."
           ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "process_undelegation",
+      "discriminator": [
+        196,
+        28,
+        41,
+        206,
+        48,
+        37,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "base_account",
+          "writable": true
+        },
+        {
+          "name": "buffer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  110,
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101,
+                  45,
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_account"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                181,
+                183,
+                0,
+                225,
+                242,
+                87,
+                58,
+                192,
+                204,
+                6,
+                34,
+                1,
+                52,
+                74,
+                207,
+                151,
+                184,
+                53,
+                6,
+                235,
+                140,
+                229,
+                25,
+                152,
+                204,
+                98,
+                126,
+                24,
+                147,
+                128,
+                167,
+                62
+              ]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "account_seeds",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "undelegate",
+      "docs": [
+        "Commit + release delegation, returning the probe to pure base-layer",
+        "ownership."
+      ],
+      "discriminator": [
+        131,
+        148,
+        180,
+        198,
+        91,
+        104,
+        42,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "probe",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
         }
       ],
       "args": []

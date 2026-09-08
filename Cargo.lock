@@ -1786,6 +1786,7 @@ name = "probe-oracle"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
+ "ephemeral-rollups-sdk 0.16.2",
  "pyth-solana-receiver-sdk",
 ]
 

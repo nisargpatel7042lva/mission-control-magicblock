@@ -11,8 +11,41 @@
 //! Adapted from MagicBlock's `oracle-priced-purchase/anchor` example
 //! (magicblock-labs/magicblock-engine-examples, MIT licensed), trimmed from a
 //! purchase flow down to a pure verified-observation probe.
+//!
+//! REAL BUG FOUND AND FIXED HERE, source-verified (not guessed) against
+//! MagicBlock's own `real-time-pricing-oracle` repo and dev-skill
+//! `debugging.md`: MagicBlock's Pricing Oracle republisher is ER-native by
+//! design - its own README describes the service as injecting price feeds
+//! "into ephemeral rollups", and its example SOL/USD account is linked via a
+//! `customUrl=https://devnet.magicblock.app` explorer link, not a plain
+//! base-layer one. That means the live feed account this probe reads
+//! (`ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu` in production use) is
+//! normally delegated into a specific Ephemeral Rollup: on base layer its
+//! owner is the Delegation Program (confirmed via a real
+//! `AccountOwnedByWrongProgram`-shaped failure on real devnet, not assumed -
+//! see `PYTH_RECEIVER_PROGRAM_ID`'s comment in `app/scripts/verify-e2e.js`),
+//! and its real, current state exists only on that one ER.
+//!
+//! `ObservePrice::price_update` is a typed `Account<'info, PriceUpdateV2>`,
+//! so Anchor's owner check fails outright whenever the runtime processing
+//! the instruction doesn't already see the feed with its original owner -
+//! which is exactly the case for every base-layer transaction while the
+//! feed is delegated elsewhere. Per the pricing-oracle dev-skill reference
+//! ("Make the feed available in that ER and read it there"), the fix is to
+//! run `observe_price` on the SAME Ephemeral Rollup the feed is delegated
+//! to, not on base layer. That requires `PriceProbe` itself to be
+//! delegate-able so the whole transaction (probe + feed) is visible to one
+//! runtime; the `delegate`/`commit`/`undelegate` instructions below add
+//! exactly that, mirroring `probe-core`'s already-verified pattern. The
+//! client (see `app/lib/router.ts`, `verify-e2e.js`'s `getDelegationStatus`)
+//! discovers which validator the feed is currently on via MagicBlock's
+//! router `getDelegationStatus` and pins this probe's delegation to that
+//! same validator via `DelegateConfig.validator`.
 
 use anchor_lang::prelude::*;
+use ephemeral_rollups_sdk::anchor::{commit, delegate, ephemeral};
+use ephemeral_rollups_sdk::cpi::DelegateConfig;
+use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 use pyth_solana_receiver_sdk::price_update::{Price, PriceUpdateV2};
 
 declare_id!("ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW");
@@ -23,6 +56,7 @@ pub const PROBE_SEED: &[u8] = b"oracle_probe";
 /// approach in real time, not just a pass/fail flag.
 pub const MAX_PRICE_AGE_SECONDS: u64 = 60;
 
+#[ephemeral]
 #[program]
 pub mod probe_oracle {
     use super::*;
@@ -73,6 +107,62 @@ pub mod probe_oracle {
         );
         Ok(())
     }
+
+    /// Delegate this probe to the Ephemeral Rollup validator currently
+    /// hosting the live price feed it reads. Pass that validator's identity
+    /// as the first remaining account (the client discovers it via router
+    /// `getDelegationStatus` for the feed's `price_update` account - see the
+    /// module doc comment above). Delegating to the wrong validator (or
+    /// none, letting the delegation program pick a default) would put this
+    /// probe on a different ER than the feed, where the feed is still not
+    /// visible with its real owner - the whole point of this instruction is
+    /// pinning both to the same runtime.
+    ///
+    /// `DelegateInput` only carries `payer` and the untyped `pda`, so
+    /// `owner`/`feed_id` are read back out of the account's own data first,
+    /// mirroring `probe_core::delegate`.
+    pub fn delegate(ctx: Context<DelegateInput>) -> Result<()> {
+        let (owner, feed_id) = {
+            let data = ctx.accounts.pda.try_borrow_data()?;
+            let probe = PriceProbe::try_deserialize(&mut &data[..])?;
+            (probe.owner, probe.feed_id)
+        };
+        ctx.accounts.delegate_pda(
+            &ctx.accounts.payer,
+            &[PROBE_SEED, owner.as_ref(), feed_id.as_ref()],
+            DelegateConfig {
+                validator: ctx.remaining_accounts.first().map(|acc| acc.key()),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Commit the probe's latest recorded observation back to base layer
+    /// without releasing delegation.
+    pub fn commit(ctx: Context<CommitOrUndelegate>) -> Result<()> {
+        MagicIntentBundleBuilder::new(
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.magic_context.to_account_info(),
+            ctx.accounts.magic_program.to_account_info(),
+        )
+        .commit(&[ctx.accounts.probe.to_account_info()])
+        .build_and_invoke()?;
+        Ok(())
+    }
+
+    /// Commit + release delegation, returning the probe to pure base-layer
+    /// ownership.
+    pub fn undelegate(ctx: Context<CommitOrUndelegate>) -> Result<()> {
+        MagicIntentBundleBuilder::new(
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.magic_context.to_account_info(),
+            ctx.accounts.magic_program.to_account_info(),
+        )
+        .commit_and_undelegate(&[ctx.accounts.probe.to_account_info()])
+        .build_and_invoke()?;
+        Ok(())
+    }
 }
 
 fn read_verified_price(price_update: &Account<PriceUpdateV2>, feed_id: &[u8; 32]) -> Result<Price> {
@@ -116,8 +206,30 @@ pub struct ObservePrice<'info> {
     /// The MagicBlock Pricing Oracle's republished feed account. Its address
     /// (not only its type) must be the one the application configured for
     /// this feed - checked here via the `feed_id` match, matching the
-    /// consumer safety checklist.
+    /// consumer safety checklist. This same context runs unchanged on base
+    /// layer or on an ER - Anchor's owner check only passes when the
+    /// runtime it's actually processing on can see this account with its
+    /// real (non-delegation-program) owner, which is why `delegate` above
+    /// exists: pin `probe` to whichever ER `price_update` currently is.
     pub price_update: Account<'info, PriceUpdateV2>,
+}
+
+#[delegate]
+#[derive(Accounts)]
+pub struct DelegateInput<'info> {
+    pub payer: Signer<'info>,
+    /// CHECK: the price probe PDA being delegated.
+    #[account(mut, del)]
+    pub pda: UncheckedAccount<'info>,
+}
+
+#[commit]
+#[derive(Accounts)]
+pub struct CommitOrUndelegate<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut)]
+    pub probe: Account<'info, PriceProbe>,
 }
 
 #[account]

@@ -116,9 +116,16 @@ const DEFAULT_QUEUE = new PublicKey("Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxG
 // against the address MagicBlock's own repo publishes; the feed_id is Pyth's
 // canonical Crypto.SOL/USD id from Hermes, one inference removed from
 // independent proof - if this ever reverts with UnexpectedFeed rather than
-// succeeding, that inference is the thing to revisit). The original two
-// fixtures here are kept as fallbacks but are confirmed dead on real devnet
-// (AccountNotInitialized) as of this session.
+// succeeding, that inference is the thing to revisit).
+//
+// The original two "old example fixture" accounts (B8vx8v7S...@$100,
+// EpdAP2KH...@$50) were dropped from this list on 2026-09-08: confirmed dead
+// on real devnet across every run this session (AnchorError
+// AccountNotInitialized, error 3012) - they were never live feeds, just
+// leftover fixtures from an early example. Keeping them in the suite only
+// produced two permanent, uninformative FAILs; removed rather than left as
+// noise ahead of the demo. If a genuinely new fixture is needed later, source
+// its address the same way the live one was sourced, not by guessing.
 function feedIdFromHex(hex) {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -130,21 +137,35 @@ const ORACLE_FIXTURES = [
     priceUpdate: new PublicKey("ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu"),
     feedId: feedIdFromHex("ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"),
   },
-  {
-    label: "SOL/USD (old example fixture @ $100, likely dead)",
-    priceUpdate: new PublicKey("B8vx8v7SwZsmFYz3fkSJphr7uq34LoiVr18pimLG5FJM"),
-    feedId: feedIdFromHex("969cefe5a1c3dc424aeaf191893d642799b8545431b5e2560e1cc78ccfdd91d6".slice(0, 64)),
-  },
-  {
-    label: "SOL/USD (old example fixture @ $50, likely dead)",
-    priceUpdate: new PublicKey("EpdAP2KHQAXPccREjM1WsLiyKVcchYj82pv9sWZhYUY1"),
-    feedId: feedIdFromHex("cd5b1dc2e5486ee8a1fa93a76ad56a1d15fef45c54fac50c7b489f1f3be0136a".slice(0, 64)),
-  },
 ];
 
 const BASE_LAYER_RPC = process.env.RPC_URL || "https://rpc.magicblock.app/devnet";
 const PUBLIC_DEVNET_RPC = "https://api.devnet.solana.com";
 const ASIA_ER_RPC = "https://devnet-as.magicblock.app/";
+const ROUTER_RPC = "https://devnet-router.magicblock.app/";
+
+/**
+ * Router `getDelegationStatus` - MagicBlock's own account-to-ER routing
+ * lookup (magicblock dev skill, debugging.md: a JSON-RPC POST with exactly
+ * one account in `params`, response shape reproduced from that doc, not
+ * guessed). Used below to discover which specific ER validator currently
+ * hosts the live Pricing Oracle SOL/USD feed, so probe-oracle's PriceProbe
+ * can be delegated to that SAME validator - see the real root-cause writeup
+ * in programs/probe-oracle/src/lib.rs's module doc comment and
+ * app/lib/router.ts (the browser-side twin of this same lookup, used by
+ * OracleProbePanel.tsx).
+ */
+async function getDelegationStatus(pubkeyBase58) {
+  const res = await fetch(ROUTER_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getDelegationStatus", params: [pubkeyBase58] }),
+  });
+  if (!res.ok) throw new Error(`router getDelegationStatus HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(`router getDelegationStatus RPC error: ${JSON.stringify(json.error)}`);
+  return json.result; // { isDelegated, fqdn?, delegationRecord?: { authority, owner, delegationSlot, lamports } }
+}
 
 function toLabel16(label) {
   const out = new Uint8Array(16);
@@ -713,72 +734,130 @@ async function main() {
       try {
         const owner = wallet.publicKey;
         const pda = oracleProbePda(owner, fixture.feedId);
+        results.oracle[fixture.label] = { probePda: pda.toBase58() };
 
         const { ms: initMs, result: initSig } = await timeIt(() =>
           programs.oracle.methods.initialize(Array.from(fixture.feedId)).accounts({ user: owner, systemProgram: SystemProgram.programId }).rpc(),
         );
         logStep(P, `initialize (${fixture.label})`, true, { ms: initMs, signature: initSig });
+        results.oracle[fixture.label].initSig = initSig;
 
-        // Real pre-check, not a guess: if MagicBlock's own republisher
-        // currently has this price_update account delegated into an ER, a
-        // base-layer observe_price call is guaranteed to fail with
-        // AccountOwnedByWrongProgram regardless of feed_id correctness.
-        // Poll its real owner for up to 20s in case this is a live
-        // delegate/commit cycle that resolves on its own, rather than
-        // burning a transaction we already know will fail.
-        const ownerPollStart = Date.now();
-        let priceUpdateInfo = await conn.getAccountInfo(fixture.priceUpdate);
-        while (
-          priceUpdateInfo?.owner?.equals(DELEGATION_PROGRAM_ID) &&
-          Date.now() - ownerPollStart < 20_000
-        ) {
-          await sleep(2000);
-          priceUpdateInfo = await conn.getAccountInfo(fixture.priceUpdate);
-        }
-        if (priceUpdateInfo?.owner?.equals(DELEGATION_PROGRAM_ID)) {
-          logStep(P, `observe_price (${fixture.label})`, false, {
-            note:
-              `price_update account (${fixture.priceUpdate.toBase58()}) is owned by the Delegation Program ` +
-              `(${DELEGATION_PROGRAM_ID.toBase58()}), not the Pyth receiver program (${PYTH_RECEIVER_PROGRAM_ID.toBase58()}), ` +
-              `even after ${Date.now() - ownerPollStart}ms of polling - it is currently delegated into an ephemeral rollup ` +
-              `on base layer's own account index. A base-layer-only reader cannot deserialize it as PriceUpdateV2 until it's ` +
-              `committed back. Real evidence, not assumed - skipping the doomed-to-fail transaction.`,
+        // Real router lookup, not a guess: ask MagicBlock's own router
+        // where this feed currently lives. It's ER-native by design (see
+        // programs/probe-oracle/src/lib.rs's module doc comment), so on
+        // base layer it normally shows owned by the Delegation Program -
+        // confirmed on a real prior run, not assumed (see
+        // PYTH_RECEIVER_PROGRAM_ID's comment above).
+        const feedStatus = await getDelegationStatus(fixture.priceUpdate.toBase58());
+        results.oracle[fixture.label].feedDelegationStatus = feedStatus;
+
+        if (!feedStatus?.isDelegated) {
+          // Real evidence says the feed's true state is on base layer right
+          // now - the original direct read is correct as-is.
+          logStep(P, `router: feed is not ER-delegated (${fixture.label})`, true, {
+            note: "reading price_update on base layer",
           });
-          results.oracle[fixture.label] = {
-            error: "price_update account is currently delegated (owned by Delegation Program) on base layer",
-            observedOwner: priceUpdateInfo.owner.toBase58(),
-          };
-          continue;
-        } else if (priceUpdateInfo && !priceUpdateInfo.owner.equals(PYTH_RECEIVER_PROGRAM_ID)) {
-          logStep(P, `observe_price (${fixture.label}) owner check`, false, {
-            note: `price_update owner is ${priceUpdateInfo.owner.toBase58()}, neither the Pyth receiver program nor the Delegation Program - unexpected, proceeding anyway to see the real error.`,
+          const { ms: obsMs, result: obsSig } = await timeIt(() =>
+            programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
+          );
+          const account = await programs.oracle.account.priceProbe.fetch(pda);
+          const price = Number(account.lastPrice.toString()) * Math.pow(10, account.lastExponent);
+          const ageSeconds = Math.floor(Date.now() / 1000 - account.lastPublishTime.toNumber());
+          logStep(P, `observe_price (${fixture.label}, base layer)`, true, {
+            ms: obsMs,
+            signature: obsSig,
+            note: `price=${price.toFixed(4)} publish_time=${account.lastPublishTime.toString()} age=${ageSeconds}s observations=${account.observationCount.toString()}`,
           });
+          Object.assign(results.oracle[fixture.label], {
+            observeSig: obsSig,
+            price,
+            lastPublishTime: account.lastPublishTime.toString(),
+            ageSecondsAtCheck: ageSeconds,
+            observationCount: account.observationCount.toString(),
+          });
+          return; // first fixture that works is enough - stop here
         }
 
+        const targetValidator = new PublicKey(feedStatus.delegationRecord.authority);
+        const feedFqdn = feedStatus.fqdn;
+        logStep(P, `router: feed is ER-delegated (${fixture.label})`, true, {
+          note: `validator=${targetValidator.toBase58()} fqdn=${feedFqdn} original_owner=${feedStatus.delegationRecord.owner} delegation_slot=${feedStatus.delegationRecord.delegationSlot}`,
+        });
+
+        // Make sure our own PriceProbe is delegated to that exact
+        // validator before trying to read the feed there - the feed's ER
+        // placement can differ between runs, so don't trust a stale
+        // delegation from a prior run without checking.
+        let { delegated: probeDelegated } = await isDelegated(conn, pda);
+        if (probeDelegated) {
+          const probeStatus = await getDelegationStatus(pda.toBase58());
+          if (probeStatus?.isDelegated && probeStatus.delegationRecord?.authority === targetValidator.toBase58() && probeStatus.fqdn) {
+            logStep(P, `probe already delegated to the right validator (${fixture.label})`, true, { note: probeStatus.fqdn });
+          } else if (probeStatus?.isDelegated && probeStatus.fqdn) {
+            const { program: erOraclePrev } = erProgram(probeOracleIdl, probeStatus.fqdn);
+            const commitAcc = commitAccounts();
+            const { result: undelSig } = await timeIt(() =>
+              erOraclePrev.methods.undelegate().accounts({ payer: owner, probe: pda, ...commitAcc }).rpc(),
+            );
+            logStep(P, `undelegate stale probe delegation (${fixture.label})`, true, {
+              signature: undelSig,
+              note: `was on ${probeStatus.fqdn}, feed is now on ${feedFqdn}`,
+            });
+            probeDelegated = false;
+          }
+        }
+
+        if (!probeDelegated) {
+          const acc = delegateAccounts(pda, PROBE_ORACLE_ID);
+          const { ms: delMs, result: delSig } = await timeIt(() =>
+            programs.oracle.methods
+              .delegate()
+              .accounts({ payer: owner, pda, ...acc })
+              .remainingAccounts([{ pubkey: targetValidator, isWritable: false, isSigner: false }])
+              .rpc(),
+          );
+          logStep(P, `delegate probe -> feed's validator (${fixture.label})`, true, {
+            ms: delMs,
+            signature: delSig,
+            note: `validator=${targetValidator.toBase58()}`,
+          });
+          results.oracle[fixture.label].delegateSig = delSig;
+        }
+
+        const { program: erOracle } = erProgram(probeOracleIdl, feedFqdn);
         const { ms: obsMs, result: obsSig } = await timeIt(() =>
-          programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
+          erOracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
         );
-        const account = await programs.oracle.account.priceProbe.fetch(pda);
+        const account = await erOracle.account.priceProbe.fetch(pda);
         const price = Number(account.lastPrice.toString()) * Math.pow(10, account.lastExponent);
         const ageSeconds = Math.floor(Date.now() / 1000 - account.lastPublishTime.toNumber());
-        logStep(P, `observe_price (${fixture.label})`, true, {
+        logStep(P, `observe_price (${fixture.label}, ${feedFqdn})`, true, {
           ms: obsMs,
           signature: obsSig,
           note: `price=${price.toFixed(4)} publish_time=${account.lastPublishTime.toString()} age=${ageSeconds}s observations=${account.observationCount.toString()}`,
         });
-        results.oracle[fixture.label] = {
-          probePda: pda.toBase58(),
-          initSig,
+        Object.assign(results.oracle[fixture.label], {
           observeSig: obsSig,
           price,
           lastPublishTime: account.lastPublishTime.toString(),
           ageSecondsAtCheck: ageSeconds,
           observationCount: account.observationCount.toString(),
-        };
+          erEndpoint: feedFqdn,
+        });
+
+        // Commit + undelegate so the probe doesn't sit in a delegated state
+        // between script runs (mirrors runCore/runActions/runCrank cleanup).
+        const commitAcc = commitAccounts();
+        const { result: undelSig2 } = await timeIt(() =>
+          erOracle.methods.undelegate().accounts({ payer: owner, probe: pda, ...commitAcc }).rpc(),
+        );
+        logStep(P, `commit + undelegate (${fixture.label})`, true, { signature: undelSig2 });
+        results.oracle[fixture.label].undelegateSig = undelSig2;
+
         return; // first fixture that works is enough - stop here
       } catch (e) {
         logStep(P, `observe_price (${fixture.label})`, false, { note: e.message || String(e) });
-        results.oracle[fixture.label] = { error: e.message || String(e) };
+        results.oracle[fixture.label] = { ...(results.oracle[fixture.label] || {}), error: e.message || String(e) };
       }
     }
   }

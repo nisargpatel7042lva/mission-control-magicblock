@@ -37,8 +37,23 @@
 // published address); the feed_id match is the one inference in this chain
 // that isn't independently proven from here - if `observe_price` reverts
 // with `UnexpectedFeed` rather than succeeding, that's the piece to
-// revisit. Old fixtures kept below as fallback attempts in case this one
-// is ever wrong or rotated in turn.
+// revisit.
+//
+// This feed is normally delegated into a specific Ephemeral Rollup (see
+// probe-oracle's module doc comment in programs/probe-oracle/src/lib.rs for
+// the full root-cause writeup) - reading it correctly requires discovering
+// that validator via `getDelegationStatus` (see `./router.ts`) and running
+// `observe_price` there, which is what `OracleProbePanel` and
+// `verify-e2e.js` now do instead of a plain base-layer call.
+//
+// The original two "old example fixture" accounts (B8vx8v7S...@$100,
+// EpdAP2KH...@$50) were dropped from this list on 2026-09-08: confirmed
+// dead on real devnet across every run this session (AnchorError
+// AccountNotInitialized, error 3012) - they were never live feeds, just
+// leftover fixtures from an early example, and kept only two permanent,
+// uninformative FAILs on the screen. If a genuinely new fixture is needed
+// later, source its address the same way the live one was sourced above,
+// not by guessing.
 
 import { PublicKey } from "@solana/web3.js";
 
@@ -62,20 +77,6 @@ export const ORACLE_FIXTURES: OracleFixture[] = [
     priceUpdate: new PublicKey("ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu"),
     feedId: feedIdFromHex(
       "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
-    ),
-  },
-  {
-    label: "SOL/USD (old example fixture @ $100, likely dead)",
-    priceUpdate: new PublicKey("B8vx8v7SwZsmFYz3fkSJphr7uq34LoiVr18pimLG5FJM"),
-    feedId: feedIdFromHex(
-      "969cefe5a1c3dc424aeaf191893d642799b8545431b5e2560e1cc78ccfdd91d6".slice(0, 64),
-    ),
-  },
-  {
-    label: "SOL/USD (old example fixture @ $50, likely dead)",
-    priceUpdate: new PublicKey("EpdAP2KHQAXPccREjM1WsLiyKVcchYj82pv9sWZhYUY1"),
-    feedId: feedIdFromHex(
-      "cd5b1dc2e5486ee8a1fa93a76ad56a1d15fef45c54fac50c7b489f1f3be0136a".slice(0, 64),
     ),
   },
 ];
