@@ -532,6 +532,44 @@ async function main() {
       const milestoneBefore = await programs.actions.account.milestone.fetch(mile);
       results.actions.highValueBefore = milestoneBefore.highValue.toString();
 
+      // The post-commit "update_milestone" action is authenticated via an
+      // escrow PDA (`ephemeral_balance_pda_from_payer(escrow_auth, 255)`)
+      // that only the delegation program can sign for - real MagicBlock
+      // security model, see programs/probe-actions/src/lib.rs. Nothing in
+      // the current dashboard UI ever creates/funds that escrow account, so
+      // without this step the action likely never actually lands even
+      // though "commit + schedule milestone update" reports success.
+      //
+      // UPDATE: funding order relative to delegate() turned out NOT to be the
+      // real bug (kept funding it here anyway since doing it early is
+      // harmless and matches MagicBlock's own reference test). The actual
+      // root cause, found by reading the delegation program's real source
+      // (magicblock-labs/delegation-program, commit 6898ef4b,
+      // src/processor/call_handler_v2.rs): the on-chain account list the
+      // delegation program sends into `update_milestone` is
+      // [milestone, probe, source_program, escrow_auth, escrow] - our Rust
+      // `UpdateMilestoneAction` struct was missing the `source_program`
+      // field, so Anchor bound `escrow_auth`/`escrow` one position off (the
+      // real escrow PDA landed as an unbound trailing account). Fixed in
+      // programs/probe-actions/src/lib.rs; requires a program redeploy,
+      // not just this script, to take effect. See the doc comment on
+      // `UpdateMilestoneAction` in lib.rs for the full account-by-account
+      // trace.
+      const escrow = escrowPdaFromEscrowAuthority(owner, 255);
+      const escrowInfo = await conn.getAccountInfo(escrow);
+      const escrowLamports = escrowInfo?.lamports || 0;
+      results.actions.escrowPda = escrow.toBase58();
+      results.actions.escrowLamportsBefore = escrowLamports;
+      if (escrowLamports < 5_000_000) {
+        const topUpIx = createTopUpEscrowInstruction(escrow, owner, owner, 10_000_000, 255);
+        const tx = new Transaction().add(topUpIx);
+        const { ms, result: sig } = await timeIt(() => baseProvider.sendAndConfirm(tx, []));
+        logStep(P, "top up escrow (real fix: dashboard UI never does this; funded BEFORE delegate, matching MagicBlock's own working example)", true, { ms, signature: sig, note: "funded 0.01 SOL to the escrow PDA the post-commit action needs" });
+        results.actions.escrowTopUpSig = sig;
+      } else {
+        logStep(P, "top up escrow", true, { note: "already funded from a prior run" });
+      }
+
       let { delegated } = await isDelegated(conn, pda);
       if (!delegated) {
         const acc = delegateAccounts(pda, PROBE_ACTIONS_ID);
@@ -548,30 +586,6 @@ async function main() {
       const { ms: pingMs, result: pingSig } = await timeIt(() => erActions.methods.ping().accounts({ probe: pda }).rpc());
       logStep(P, "ping (asia ER)", true, { ms: pingMs, signature: pingSig });
       results.actions.pingSig = pingSig;
-
-      // The post-commit "update_milestone" action is authenticated via an
-      // escrow PDA (`ephemeral_balance_pda_from_payer(escrow_auth, 255)`)
-      // that only the delegation program can sign for - real MagicBlock
-      // security model, see programs/probe-actions/src/lib.rs. Nothing in
-      // the current dashboard UI ever creates/funds that escrow account, so
-      // without this step the action likely never actually lands even
-      // though "commit + schedule milestone update" reports success. This
-      // script funds it for real so we can find out, on real devnet, which
-      // of those two things is actually true.
-      const escrow = escrowPdaFromEscrowAuthority(owner, 255);
-      const escrowInfo = await conn.getAccountInfo(escrow);
-      const escrowLamports = escrowInfo?.lamports || 0;
-      results.actions.escrowPda = escrow.toBase58();
-      results.actions.escrowLamportsBefore = escrowLamports;
-      if (escrowLamports < 5_000_000) {
-        const topUpIx = createTopUpEscrowInstruction(escrow, owner, owner, 10_000_000, 255);
-        const tx = new Transaction().add(topUpIx);
-        const { ms, result: sig } = await timeIt(() => baseProvider.sendAndConfirm(tx, []));
-        logStep(P, "top up escrow (real fix: dashboard UI never does this)", true, { ms, signature: sig, note: "funded 0.01 SOL to the escrow PDA the post-commit action needs" });
-        results.actions.escrowTopUpSig = sig;
-      } else {
-        logStep(P, "top up escrow", true, { note: "already funded from a prior run" });
-      }
 
       const commitAcc = commitAccounts();
       const { ms: caMs, result: caSig } = await timeIt(() =>

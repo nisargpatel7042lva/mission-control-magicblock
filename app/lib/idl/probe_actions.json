@@ -591,6 +591,15 @@
           }
         },
         {
+          "name": "source_program",
+          "docs": [
+            "list lines up positionally with what the delegation program actually",
+            "sends (see struct doc comment above) - without this field, the two",
+            "injected accounts below silently received the wrong values."
+          ],
+          "address": "63pMnDypD8SVayKfXz1HbHjbQW1caX82UPRgsK4wSegh"
+        },
+        {
           "name": "escrow_auth",
           "docs": [
             "for this user-paid flow)."

@@ -221,6 +221,28 @@ pub struct CommitAndAction<'info> {
 /// escrow PDA derived from `escrow_auth` - the only accounts the delegation
 /// program itself can make true. This is the authentication a bare
 /// `seeds`/`bump` constraint on `milestone` cannot provide.
+///
+/// REAL BUG FOUND AND FIXED HERE (source-verified against
+/// magicblock-labs/delegation-program, commit 6898ef4b, files
+/// `src/processor/call_handler_v2.rs`): when the delegation program
+/// dispatches a post-commit action it always builds the callee's account
+/// list as `[...our declared action accounts, source_program,
+/// escrow_authority, escrow]` - see `process_call_handler_v2`:
+/// `other_accounts.iter().chain([source_program, escrow_authority_account,
+/// escrow_account])`. Anchor binds accounts to struct fields *positionally*,
+/// not by value, so a struct missing `source_program` here was silently
+/// off by one: `escrow_auth` was actually bound to `source_program`'s value
+/// and `escrow` was actually bound to `escrow_authority`'s value (the
+/// wallet) - which is never a signer - while the real, correctly-funded
+/// escrow PDA landed as an unbound trailing account Anchor never checked.
+/// That is exactly why every real devnet run failed with
+/// `AnchorError caused by account: escrow. Error Code: Unauthorized` even
+/// though the escrow PDA's address and funding were independently
+/// confirmed correct (see inspect-actions.js) - the value was right, it was
+/// just bound to the wrong field. Confirmed by direct diff against
+/// MagicBlock's own reference `UpdateLeaderboard` example, which declares
+/// this exact `source_program` field
+/// (magic-actions.md's "Verify the Caller" section).
 #[action]
 #[derive(Accounts)]
 pub struct UpdateMilestoneAction<'info> {
@@ -232,6 +254,12 @@ pub struct UpdateMilestoneAction<'info> {
     /// `milestone` regardless of which program currently owns it.
     #[account(seeds = [ACTION_PROBE_SEED, milestone.owner.as_ref()], bump)]
     pub probe: UncheckedAccount<'info>,
+    /// CHECK: program that scheduled the action. Required so the account
+    /// list lines up positionally with what the delegation program actually
+    /// sends (see struct doc comment above) - without this field, the two
+    /// injected accounts below silently received the wrong values.
+    #[account(address = crate::ID @ ActionProbeError::Unauthorized)]
+    pub source_program: UncheckedAccount<'info>,
     /// CHECK: payer identity the action was scheduled with (the user wallet
     /// for this user-paid flow).
     pub escrow_auth: UncheckedAccount<'info>,

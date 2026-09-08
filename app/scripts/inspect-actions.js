@@ -204,17 +204,18 @@ async function main() {
         } else {
           console.log(
             "\n  => VERDICT: both the correct escrow_auth (our wallet) and the correct escrow PDA (the one we " +
-              "funded) ARE present in the real accounts the delegation program passed - address derivation is " +
-              "confirmed correct, this is not a funding or address problem. The on-chain failure is Anchor's " +
-              "`signer` constraint specifically (`#[account(signer @ ...)]` on escrow, listed first in our " +
-              "code, so it's the one that's actually tripping) - meaning the delegation program invoked our " +
-              "program WITHOUT flagging the escrow PDA as a signer on this call, even though it passed the " +
-              "right pubkey. That's either a real gap in how MagicBlock's deployed devnet asia-region " +
-              "validator signs the escrow for a wallet-paid (non-PDA-delegated) action right now, or an " +
-              "undocumented extra requirement. This is the point to file a report with MagicBlock (Discord/" +
-              "GitHub) - attach this transaction and this script's full output as evidence; it isn't something " +
-              "fixable from our program code, since our code already matches their own documented pattern " +
-              "exactly.",
+              "funded) ARE present in the real accounts the delegation program passed - address derivation and " +
+              "funding are confirmed correct. ROOT CAUSE FOUND (fixed in programs/probe-actions/src/lib.rs): " +
+              "the delegation program's call_handler_v2 always builds the callee account list as " +
+              "[...our declared action accounts, source_program, escrow_auth, escrow] - source-verified against " +
+              "magicblock-labs/delegation-program, commit 6898ef4b, src/processor/call_handler_v2.rs. Our Rust " +
+              "`UpdateMilestoneAction` struct was missing the `source_program` field, so Anchor bound accounts " +
+              "one position off: `escrow_auth` actually received source_program's value and `escrow` actually " +
+              "received escrow_auth's value (the wallet, never a signer) - the real, correctly-funded escrow PDA " +
+              "landed as an unbound trailing account Anchor never checked. That's exactly why `signer` failed " +
+              "despite the right pubkey showing up in the raw list. Not a MagicBlock-side gap - our account " +
+              "struct was one field short of MagicBlock's own documented `UpdateLeaderboard` example. Requires " +
+              "a program rebuild + redeploy (not just a script or UI change) to take effect.",
           );
         }
       }
