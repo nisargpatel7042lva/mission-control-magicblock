@@ -213,6 +213,25 @@ fn deserialize_price_update(account_info: &UncheckedAccount) -> Result<PriceUpda
 }
 
 fn read_verified_price(price_update: &PriceUpdateV2, feed_id: &[u8; 32]) -> Result<Price> {
+    // DIAGNOSTIC ONLY - no behavior change. Added after a real devnet run
+    // got past both owner checks (the actual bugs) and then reverted here
+    // with the generic StaleOrInvalidPrice message, which doesn't say
+    // *which* of the three conditions below actually failed. Logged instead
+    // of guessed - these lines print in the transaction logs on both
+    // success and failure, so the real posted_slot/publish_time/price for
+    // this specific feed account are visible either way. Safe to remove
+    // once the real cause is confirmed.
+    let now = Clock::get()?.unix_timestamp;
+    msg!(
+        "oracle diagnostic: posted_slot={} publish_time={} now={} age_seconds={} raw_price={} feed_id_matches={}",
+        price_update.posted_slot,
+        price_update.price_message.publish_time,
+        now,
+        now - price_update.price_message.publish_time,
+        price_update.price_message.price,
+        price_update.price_message.feed_id == *feed_id,
+    );
+
     // `get_price_no_older_than` only checks `verification_level` (Full) and
     // `publish_time`. Per the MagicBlock Pricing Oracle security guidance,
     // `VerificationLevel::Full` alone is not proof of a genuine republisher

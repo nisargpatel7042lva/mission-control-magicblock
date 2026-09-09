@@ -837,7 +837,16 @@ async function main() {
         // threw (initialize, delegate, or observe_price could all land
         // here), which is exactly what hid the real bug fixed above.
         logStep(P, "unhandled error", false, { note: e.message || String(e) });
-        results.oracle[fixture.label] = { ...(results.oracle[fixture.label] || {}), error: e.message || String(e) };
+        // Real transaction logs (incl. any on-chain msg! diagnostics),
+        // printed raw rather than left inside the thrown error - a
+        // generic AnchorError message alone doesn't say which specific
+        // condition inside the program actually failed.
+        const txLogs = e?.logs || e?.transactionLogs || e?.error?.logs || null;
+        if (Array.isArray(txLogs) && txLogs.length) {
+          console.log("  Real on-chain program logs for this failure:");
+          for (const l of txLogs) console.log(`    ${l}`);
+        }
+        results.oracle[fixture.label] = { ...(results.oracle[fixture.label] || {}), error: e.message || String(e), logs: txLogs || undefined };
       }
     }
   }
