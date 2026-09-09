@@ -12,51 +12,57 @@
 //! (magicblock-labs/magicblock-engine-examples, MIT licensed), trimmed from a
 //! purchase flow down to a pure verified-observation probe.
 //!
-//! REAL BUG FOUND AND FIXED HERE, source-verified (not guessed) against
-//! MagicBlock's own `real-time-pricing-oracle` repo and dev-skill
-//! `debugging.md`: MagicBlock's Pricing Oracle republisher is ER-native by
-//! design - its own README describes the service as injecting price feeds
-//! "into ephemeral rollups", and its example SOL/USD account is linked via a
-//! `customUrl=https://devnet.magicblock.app` explorer link, not a plain
-//! base-layer one. That means the live feed account this probe reads
-//! (`ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu` in production use) is
-//! normally delegated into a specific Ephemeral Rollup: on base layer its
-//! owner is the Delegation Program (confirmed via a real
-//! `AccountOwnedByWrongProgram`-shaped failure on real devnet, not assumed -
-//! see `PYTH_RECEIVER_PROGRAM_ID`'s comment in `app/scripts/verify-e2e.js`),
-//! and its real, current state exists only on that one ER.
+//! REAL BUGS FOUND AND FIXED HERE, source-verified against real on-chain
+//! evidence and MagicBlock's own repos at every step (not guessed) -
+//! including two dead ends this comment used to describe as the fix, kept
+//! below with corrections so the trail is honest about what didn't work:
 //!
-//! `ObservePrice::price_update` is a typed `Account<'info, PriceUpdateV2>`,
-//! so Anchor's owner check fails outright whenever the runtime processing
-//! the instruction doesn't already see the feed with its original owner -
-//! which is exactly the case for every base-layer transaction while the
-//! feed is delegated elsewhere. Per the pricing-oracle dev-skill reference
-//! ("Make the feed available in that ER and read it there"), the fix is to
-//! run `observe_price` on an Ephemeral Rollup, not on base layer. That
-//! requires `PriceProbe` itself to be delegate-able so the whole transaction
-//! (probe + feed) is visible to one runtime; the `delegate`/`commit`/
-//! `undelegate` instructions below add exactly that, mirroring
-//! `probe-core`'s already-verified pattern.
-//!
-//! CORRECTION, source-verified against `magicblock-labs/real-time-pricing-
-//! oracle`'s and `magicblock-labs/delegation-program`'s actual Rust source
-//! (a prior version of this comment guessed the feed is pinned to one
-//! specific validator, discoverable via router `getDelegationStatus` - that
-//! was wrong, caught by a real `-32604 "account has been delegated to
-//! unknown ER node: 11111111111111111111111111111111"` router error on a
-//! real devnet run): the oracle program delegates its feed accounts via the
-//! delegation program's `DelegateWithAnyValidator` entrypoint
-//! (`real-time-pricing-oracle/program/ephemeral-oracle/.../lib.rs`,
-//! `DELEGATE_WITH_ANY_VALIDATOR_DISCRIMINATOR`), passing
-//! `validator: Some(system_program::id())` - a deliberate sentinel this
-//! entrypoint alone is allowed to set (`delegation-program/src/processor/
-//! fast/delegate.rs`'s `allow_system_program_validator` guard), meaning the
-//! feed is intentionally NOT pinned to one ER: it's meant to be readable
-//! from any of them, not routed to a single node the way an ordinary
-//! delegated PDA is. So there is no "same validator" to discover or pin to
-//! - the client instead just delegates this probe the ordinary way (default
-//! validator, no override) to the same shared devnet ER every other probe
-//! in this app already uses, and reads the feed there.
+//! 1. The live feed account this probe reads
+//!    (`ENYwebBThHzmzwPLAQvCucUTsjyfBSZdD9ViXksS4jPu` in production use) is
+//!    delegated into an Ephemeral Rollup on base layer (owner =
+//!    `DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh`, confirmed via a real
+//!    `getAccountInfo` call, not assumed) - MagicBlock's Pricing Oracle is
+//!    ER-native by design (its own README describes injecting feeds "into
+//!    ephemeral rollups"). Reading it therefore requires being on an ER,
+//!    which is why `PriceProbe` is delegate-able below (`delegate`/`commit`/
+//!    `undelegate`, mirroring `probe-core`'s pattern) - this part holds.
+//! 2. FIRST WRONG GUESS: assumed the feed is pinned to one specific
+//!    validator, discoverable via router `getDelegationStatus`, and tried
+//!    to pin this probe to that same one. Wrong - caught by a real
+//!    `-32604 "account has been delegated to unknown ER node:
+//!    11111111111111111111111111111111"` router error on a real devnet run.
+//!    Source-traced to `magicblock-labs/real-time-pricing-oracle` +
+//!    `magicblock-labs/delegation-program`: the oracle delegates via the
+//!    delegation program's `DelegateWithAnyValidator` entrypoint with
+//!    `validator: Some(system_program::id())` - a deliberate "not pinned to
+//!    one ER" sentinel. Corrected fix: just delegate this probe the
+//!    ordinary way (default validator) to the same shared Asia ER every
+//!    other probe in this app already uses - "any validator" means any ER
+//!    can see it.
+//! 3. SECOND WRONG GUESS: assumed that once on an ER, the feed would pass
+//!    Anchor's normal owner check for `PriceUpdateV2`. Wrong again - caught
+//!    by a real `AccountOwnedByWrongProgram` ("The given account is owned
+//!    by a different program than expected") failure on a real devnet run,
+//!    even after successfully delegating and routing to the Asia ER.
+//!    Root-caused with real `getAccountInfo` calls against base layer AND
+//!    all four devnet ERs (asia/eu/us/tee): every single one shows this
+//!    feed account owned by `PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd` -
+//!    MagicBlock's OWN Pricing Oracle program (this is also literally the
+//!    "current oracle program ID" the magicblock dev-skill's
+//!    `pricing-oracle.md` names) - never the Pyth receiver program
+//!    `pyth_solana_receiver_sdk`'s `PriceUpdateV2` type hard-requires via
+//!    Anchor's `Owner` trait. MagicBlock republishes Pyth Lazer data into
+//!    an account with `PriceUpdateV2`'s exact byte layout, but under ITS
+//!    OWN program's ownership, not Pyth's - so `Account<'info,
+//!    PriceUpdateV2>` was never going to pass its automatic owner check on
+//!    ANY layer, delegated or not. The real fix: read `price_update` as an
+//!    `UncheckedAccount`, verify its owner is MagicBlock's Pricing Oracle
+//!    program explicitly (`PRICING_ORACLE_PROGRAM_ID` below), and
+//!    deserialize its data manually as `PriceUpdateV2` - the layout
+//!    assumption is still real and still checked (feed_id/price/exponent/
+//!    publish_time/posted_slot all get validated exactly as before), only
+//!    the *owner* expectation changes to match what the account actually
+//!    is on any layer that can see it.
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::{commit, delegate, ephemeral};
@@ -65,6 +71,13 @@ use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 use pyth_solana_receiver_sdk::price_update::{Price, PriceUpdateV2};
 
 declare_id!("ELzCkEvf5EV6KVAQgvbuGyLZ9TJrfzvdCejKs6n85EPW");
+
+/// MagicBlock's Pricing Oracle program - the REAL owner of the republished
+/// feed accounts this probe reads (see module doc comment above). Sourced
+/// from the magicblock dev-skill's `pricing-oracle.md` ("The current oracle
+/// program ID is..."), independently confirmed via real `getAccountInfo`
+/// calls against base layer and all four devnet ERs.
+pub const PRICING_ORACLE_PROGRAM_ID: Pubkey = pubkey!("PriCems5tHihc6UDXDjzjeawomAwBduWMGAi8ZUjppd");
 
 pub const PROBE_SEED: &[u8] = b"oracle_probe";
 /// Reject any price whose upstream publish time is older than this. The
@@ -100,12 +113,19 @@ pub mod probe_oracle {
     /// `MAX_PRICE_AGE_SECONDS` - `get_price_no_older_than` enforces the
     /// freshness bound itself against the current on-chain clock.
     pub fn observe_price(ctx: Context<ObservePrice>) -> Result<()> {
+        // `price_update` is an `UncheckedAccount` (its owner is MagicBlock's
+        // Pricing Oracle program, not Pyth's receiver program - see module
+        // doc comment), so we deserialize its `PriceUpdateV2`-shaped data
+        // ourselves rather than relying on Anchor's `Account<'info, T>`
+        // automatic owner check, which hard-requires the Pyth receiver
+        // program and would reject this account unconditionally.
+        let price_update = deserialize_price_update(&ctx.accounts.price_update)?;
         require!(
-            ctx.accounts.price_update.price_message.feed_id == ctx.accounts.probe.feed_id,
+            price_update.price_message.feed_id == ctx.accounts.probe.feed_id,
             OracleProbeError::UnexpectedFeed
         );
 
-        let price = read_verified_price(&ctx.accounts.price_update, &ctx.accounts.probe.feed_id)?;
+        let price = read_verified_price(&price_update, &ctx.accounts.probe.feed_id)?;
 
         let probe = &mut ctx.accounts.probe;
         probe.last_price = price.price;
@@ -179,7 +199,20 @@ pub mod probe_oracle {
     }
 }
 
-fn read_verified_price(price_update: &Account<PriceUpdateV2>, feed_id: &[u8; 32]) -> Result<Price> {
+/// Deserialize `price_update`'s raw account data as `PriceUpdateV2`,
+/// bypassing Anchor's `Account<'info, T>` automatic owner check (see module
+/// doc comment for why: the account's real owner is MagicBlock's Pricing
+/// Oracle program, not the Pyth receiver program `PriceUpdateV2::owner()`
+/// expects). The account's *expected* owner is still checked - explicitly,
+/// via the `#[account(owner = ...)]` constraint on `ObservePrice::price_update`
+/// itself - so this function only has to trust the data layout, not skip
+/// ownership verification entirely.
+fn deserialize_price_update(account_info: &UncheckedAccount) -> Result<PriceUpdateV2> {
+    let data = account_info.try_borrow_data()?;
+    PriceUpdateV2::try_deserialize(&mut &data[..]).map_err(|_| error!(OracleProbeError::StaleOrInvalidPrice))
+}
+
+fn read_verified_price(price_update: &PriceUpdateV2, feed_id: &[u8; 32]) -> Result<Price> {
     // `get_price_no_older_than` only checks `verification_level` (Full) and
     // `publish_time`. Per the MagicBlock Pricing Oracle security guidance,
     // `VerificationLevel::Full` alone is not proof of a genuine republisher
@@ -217,15 +250,20 @@ pub struct Initialize<'info> {
 pub struct ObservePrice<'info> {
     #[account(mut)]
     pub probe: Account<'info, PriceProbe>,
-    /// The MagicBlock Pricing Oracle's republished feed account. Its address
-    /// (not only its type) must be the one the application configured for
-    /// this feed - checked here via the `feed_id` match, matching the
-    /// consumer safety checklist. This same context runs unchanged on base
-    /// layer or on an ER - Anchor's owner check only passes when the
-    /// runtime it's actually processing on can see this account with its
-    /// real (non-delegation-program) owner, which is why `delegate` above
-    /// exists: pin `probe` to whichever ER `price_update` currently is.
-    pub price_update: Account<'info, PriceUpdateV2>,
+    /// CHECK: the MagicBlock Pricing Oracle's republished feed account.
+    /// `UncheckedAccount` + an explicit owner constraint (rather than
+    /// `Account<'info, PriceUpdateV2>`) because its real owner is
+    /// MagicBlock's Pricing Oracle program, not the Pyth receiver program
+    /// `PriceUpdateV2::owner()` requires - see module doc comment. Its
+    /// address (not only its owner) must be the one the application
+    /// configured for this feed - checked in `observe_price` via the
+    /// `feed_id` match after manual deserialization, matching the consumer
+    /// safety checklist. This context runs unchanged on base layer or on an
+    /// ER; the account only satisfies the owner constraint on whichever
+    /// runtime can see it with that real owner, which is why `delegate`
+    /// above exists.
+    #[account(owner = PRICING_ORACLE_PROGRAM_ID @ OracleProbeError::UnexpectedFeedOwner)]
+    pub price_update: UncheckedAccount<'info>,
 }
 
 #[delegate]
@@ -263,6 +301,8 @@ impl PriceProbe {
 
 #[error_code]
 pub enum OracleProbeError {
+    #[msg("price feed account is not owned by MagicBlock's Pricing Oracle program")]
+    UnexpectedFeedOwner,
     #[msg("price feed account does not match the configured feed id")]
     UnexpectedFeed,
     #[msg("price update is stale, missing, or failed verification")]
