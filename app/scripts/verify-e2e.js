@@ -712,60 +712,82 @@ async function main() {
         const pda = oracleProbePda(owner, fixture.feedId);
         results.oracle[fixture.label] = { probePda: pda.toBase58() };
 
-        const { ms: initMs, result: initSig } = await timeIt(() =>
-          programs.oracle.methods.initialize(Array.from(fixture.feedId)).accounts({ user: owner, systemProgram: SystemProgram.programId }).rpc(),
-        );
-        logStep(P, `initialize (${fixture.label})`, true, { ms: initMs, signature: initSig });
-        results.oracle[fixture.label].initSig = initSig;
+        // Real bug found on a real run, not guessed: this probe PDA can be
+        // left stuck delegated (owned by the Delegation Program on base
+        // layer) if an earlier run threw before reaching the commit+
+        // undelegate cleanup near the bottom of this function - which is
+        // exactly what happened here while the price_update owner bug
+        // above was still unfixed. `initialize` uses Anchor's
+        // `init_if_needed`, which only tolerates an account that's either
+        // brand new OR already owned by probe-oracle itself; calling it
+        // again while the account is owned by the Delegation Program fails
+        // with a real `AccountOwnedByWrongProgram` on account "probe" - and
+        // the catch block below used to mislabel every failure in this
+        // function as "observe_price" regardless of which step actually
+        // threw, which is what hid this. Confirmed for real via
+        // getAccountInfo (base layer owner = Delegation Program, Asia ER
+        // owner = probe-oracle program - correctly cloned) and router
+        // getDelegationStatus (isDelegated: true, fqdn: the Asia ER) that
+        // the probe was fine and already sitting on the Asia ER the whole
+        // time; this script just never skipped straight to reading it
+        // there. So: check the probe's own delegation state FIRST, before
+        // ever calling initialize - if it's already delegated, this is a
+        // resume of an interrupted run, not a fresh one.
+        const { delegated: probeAlreadyDelegated } = await isDelegated(conn, pda);
 
-        // Real, direct check, not router-dependent: is the feed currently
-        // delegated? A prior version of this script asked the router
-        // getDelegationStatus which ER validator "owns" the feed and tried
-        // to pin this probe to that same one - that call itself failed on a
-        // real run with `-32604 "account has been delegated to unknown ER
-        // node: 11111111111111111111111111111111"`. Traced to real source
-        // (magicblock-labs/real-time-pricing-oracle +
-        // magicblock-labs/delegation-program, not guessed): the oracle
-        // delegates its feeds via the delegation program's
-        // `DelegateWithAnyValidator` entrypoint with
-        // `validator: Some(system_program::id())` - a deliberate sentinel
-        // meaning the feed is intentionally NOT pinned to one ER, it's
-        // meant to be readable from any of them. So there's no specific
-        // validator to discover - just use the same shared Asia ER every
-        // other probe in this app already uses (see programs/probe-oracle/
-        // src/lib.rs's module doc comment for the full writeup).
-        const feedOwnerInfo = await conn.getAccountInfo(fixture.priceUpdate);
-        const feedIsDelegated = !!feedOwnerInfo && feedOwnerInfo.owner.equals(DELEGATION_PROGRAM_ID);
-        logStep(P, `feed ownership check (${fixture.label})`, true, {
-          note: feedIsDelegated
-            ? `owned by the Delegation Program on base layer - ER-delegated, reading via ${ASIA_ER_RPC}`
-            : `owned by ${feedOwnerInfo?.owner?.toBase58() ?? "unknown (account not found)"} - reading on base layer`,
-        });
-
-        if (!feedIsDelegated) {
-          const { ms: obsMs, result: obsSig } = await timeIt(() =>
-            programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
+        if (!probeAlreadyDelegated) {
+          const { ms: initMs, result: initSig } = await timeIt(() =>
+            programs.oracle.methods.initialize(Array.from(fixture.feedId)).accounts({ user: owner, systemProgram: SystemProgram.programId }).rpc(),
           );
-          const account = await programs.oracle.account.priceProbe.fetch(pda);
-          const price = Number(account.lastPrice.toString()) * Math.pow(10, account.lastExponent);
-          const ageSeconds = Math.floor(Date.now() / 1000 - account.lastPublishTime.toNumber());
-          logStep(P, `observe_price (${fixture.label}, base layer)`, true, {
-            ms: obsMs,
-            signature: obsSig,
-            note: `price=${price.toFixed(4)} publish_time=${account.lastPublishTime.toString()} age=${ageSeconds}s observations=${account.observationCount.toString()}`,
-          });
-          Object.assign(results.oracle[fixture.label], {
-            observeSig: obsSig,
-            price,
-            lastPublishTime: account.lastPublishTime.toString(),
-            ageSecondsAtCheck: ageSeconds,
-            observationCount: account.observationCount.toString(),
-          });
-          return; // first fixture that works is enough - stop here
-        }
+          logStep(P, `initialize (${fixture.label})`, true, { ms: initMs, signature: initSig });
+          results.oracle[fixture.label].initSig = initSig;
 
-        let { delegated: probeDelegated } = await isDelegated(conn, pda);
-        if (!probeDelegated) {
+          // Real, direct check, not router-dependent: is the feed currently
+          // delegated? A prior version of this script asked the router
+          // getDelegationStatus which ER validator "owns" the feed and tried
+          // to pin this probe to that same one - that call itself failed on a
+          // real run with `-32604 "account has been delegated to unknown ER
+          // node: 11111111111111111111111111111111"`. Traced to real source
+          // (magicblock-labs/real-time-pricing-oracle +
+          // magicblock-labs/delegation-program, not guessed): the oracle
+          // delegates its feeds via the delegation program's
+          // `DelegateWithAnyValidator` entrypoint with
+          // `validator: Some(system_program::id())` - a deliberate sentinel
+          // meaning the feed is intentionally NOT pinned to one ER, it's
+          // meant to be readable from any of them. So there's no specific
+          // validator to discover - just use the same shared Asia ER every
+          // other probe in this app already uses (see programs/probe-oracle/
+          // src/lib.rs's module doc comment for the full writeup).
+          const feedOwnerInfo = await conn.getAccountInfo(fixture.priceUpdate);
+          const feedIsDelegated = !!feedOwnerInfo && feedOwnerInfo.owner.equals(DELEGATION_PROGRAM_ID);
+          logStep(P, `feed ownership check (${fixture.label})`, true, {
+            note: feedIsDelegated
+              ? `owned by the Delegation Program on base layer - ER-delegated, reading via ${ASIA_ER_RPC}`
+              : `owned by ${feedOwnerInfo?.owner?.toBase58() ?? "unknown (account not found)"} - reading on base layer`,
+          });
+
+          if (!feedIsDelegated) {
+            const { ms: obsMs, result: obsSig } = await timeIt(() =>
+              programs.oracle.methods.observePrice().accounts({ probe: pda, priceUpdate: fixture.priceUpdate }).rpc(),
+            );
+            const account = await programs.oracle.account.priceProbe.fetch(pda);
+            const price = Number(account.lastPrice.toString()) * Math.pow(10, account.lastExponent);
+            const ageSeconds = Math.floor(Date.now() / 1000 - account.lastPublishTime.toNumber());
+            logStep(P, `observe_price (${fixture.label}, base layer)`, true, {
+              ms: obsMs,
+              signature: obsSig,
+              note: `price=${price.toFixed(4)} publish_time=${account.lastPublishTime.toString()} age=${ageSeconds}s observations=${account.observationCount.toString()}`,
+            });
+            Object.assign(results.oracle[fixture.label], {
+              observeSig: obsSig,
+              price,
+              lastPublishTime: account.lastPublishTime.toString(),
+              ageSecondsAtCheck: ageSeconds,
+              observationCount: account.observationCount.toString(),
+            });
+            return; // first fixture that works is enough - stop here
+          }
+
           const acc = delegateAccounts(pda, PROBE_ORACLE_ID);
           const { ms: delMs, result: delSig } = await timeIt(() =>
             programs.oracle.methods.delegate().accounts({ payer: owner, pda, ...acc }).rpc(),
@@ -773,6 +795,8 @@ async function main() {
           logStep(P, `delegate probe -> asia ER (${fixture.label})`, true, { ms: delMs, signature: delSig });
           results.oracle[fixture.label].delegateSig = delSig;
         } else {
+          logStep(P, `initialize (${fixture.label})`, true, { note: "skipped - probe is already delegated, resuming from a prior run that didn't reach cleanup" });
+          logStep(P, `feed ownership check (${fixture.label})`, true, { note: "skipped - probe already delegated, reading via the ER directly" });
           logStep(P, `delegate (${fixture.label})`, true, { note: "already delegated" });
         }
 
@@ -808,7 +832,11 @@ async function main() {
 
         return; // first fixture that works is enough - stop here
       } catch (e) {
-        logStep(P, `observe_price (${fixture.label})`, false, { note: e.message || String(e) });
+        // Label the failure honestly - a prior version of this hardcoded
+        // "observe_price" here regardless of which step above actually
+        // threw (initialize, delegate, or observe_price could all land
+        // here), which is exactly what hid the real bug fixed above.
+        logStep(P, "unhandled error", false, { note: e.message || String(e) });
         results.oracle[fixture.label] = { ...(results.oracle[fixture.label] || {}), error: e.message || String(e) };
       }
     }

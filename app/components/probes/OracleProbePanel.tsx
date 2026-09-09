@@ -198,15 +198,30 @@ export function OracleProbePanel() {
         <ActionButton
           disabled={!canAct}
           busy={busy === "initialize"}
-          onClick={() =>
+          onClick={async () => {
+            if (!wallet.publicKey || !programs || !probePda) return;
+            // Real bug found on a real devnet run (see verify-e2e.js's
+            // runOracle for the full trace): initialize uses Anchor's
+            // init_if_needed, which only tolerates an account that's brand
+            // new OR already owned by probe-oracle itself. If a prior
+            // "observe price" call left this probe delegated (owned by the
+            // Delegation Program) - e.g. it failed partway through -
+            // calling initialize again fails for real with
+            // AccountOwnedByWrongProgram. A probe that already exists in
+            // any state never needs re-initializing, so check first.
+            const existing = await connection.getAccountInfo(probePda);
+            if (existing) {
+              log({ source: SOURCE, level: "success", message: "initialize skipped - probe already exists" });
+              return;
+            }
             run("initialize", async () => {
               if (!wallet.publicKey || !programs) throw new Error("not ready");
               return programs.oracle.methods
                 .initialize(Array.from(fixture.feedId))
                 .accounts({ user: wallet.publicKey, systemProgram: SystemProgram.programId } as any)
                 .rpc();
-            })
-          }
+            });
+          }}
         >
           Initialize
         </ActionButton>
